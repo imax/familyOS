@@ -201,7 +201,7 @@ def build_context(db: Database, people: People, now: datetime, author: Person, t
             "Зараз",
             [f"{now.strftime('%Y-%m-%d %H:%M')} ({tz.key}), {WEEKDAYS_UK[now.weekday()]}"],
         ),
-        section("Люди", [people.describe()]),
+        section("Сім'я (пишуть боту; решта людей — у memories)", [people.describe()]),
         section(
             "Відкриті commitments (усі)",
             [f"- {commitment_line(c, people, tz)}" for c in open_items],

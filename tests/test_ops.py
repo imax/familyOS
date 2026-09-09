@@ -81,7 +81,7 @@ def test_apply_ops_validates_and_updates(db: Database, people: People) -> None:
         {
             "reply": "",
             "commitments": [
-                {"op": "update", "id": c.id, "due_at": "2026-09-10T15:30:00+03:00", "owner": "oleh"},
+                {"op": "update", "id": c.id, "due_at": "2026-09-10T15:30+03:00", "owner": "oleh"},
                 {"op": "close", "id": c.id},
                 {"op": "update", "id": c.id, "text": "after close"},
             ],

@@ -4,9 +4,9 @@ primary_region = "waw"
 [build]
   dockerfile = "Dockerfile"
 
+# FAMILY, API tokens and web auth are set with `fly secrets set`, not here.
 [env]
   DATABASE_PATH = "/data/family.db"
-  FAMILY_YAML = "/app/family.yaml"
   TZ = "Europe/Kyiv"
 
 [[mounts]]

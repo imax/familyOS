@@ -15,7 +15,7 @@ def _settings(**kw) -> Settings:
         anthropic_api_key=None,
         openai_api_key=None,
         database_path=":memory:",
-        family_yaml="family.yaml",
+        family="oleh:1:Олег,anna:2:Анна",
         web_user="u",
         web_password="p",
         web_url=None,

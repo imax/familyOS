@@ -1,47 +1,51 @@
-"""People known to the assistant, loaded from family.yaml.
+"""The people who talk to the bot. Everything else about the family lives in memories.
 
-Not stored in the database: the file is read at startup and goes into the prompt.
-`telegram_id` doubles as the allowlist.
+Configured with one env var so nothing personal ever lands in the repo:
+
+    FAMILY=oleh:123456:Олег,anna:234567:Анна      # id:telegram_id:display name
+
+`telegram_id` doubles as the allowlist; `id` is what the LLM uses as `owner`.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from pathlib import Path
 
-import yaml
+_ID = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 @dataclass(frozen=True)
 class Person:
     id: str
     name: str
-    role: str
     telegram_id: int | None = None
-    related_to: str | None = None
 
 
 class People:
     def __init__(self, persons: list[Person]) -> None:
+        if not persons:
+            raise ValueError("at least one person is required")
         self._by_id = {p.id: p for p in persons}
         self._by_tg = {p.telegram_id: p for p in persons if p.telegram_id is not None}
 
     @classmethod
-    def load(cls, path: Path) -> People:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    def from_env(cls, spec: str) -> People:
+        """Parse `id:telegram_id:name,id:telegram_id:name`."""
         persons = []
-        for pid, attrs in raw.items():
-            attrs = attrs or {}
-            tg = attrs.get("telegram_id")
-            persons.append(
-                Person(
-                    id=str(pid),
-                    name=str(attrs.get("name", pid)),
-                    role=str(attrs.get("role", "family")),
-                    telegram_id=int(tg) if tg is not None else None,
-                    related_to=attrs.get("related_to"),
-                )
-            )
+        for chunk in spec.split(","):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            parts = [x.strip() for x in chunk.split(":")]
+            if len(parts) != 3 or not all(parts):
+                raise ValueError(f"bad FAMILY entry {chunk!r}: expected id:telegram_id:name")
+            pid, tg, name = parts
+            if not _ID.match(pid):
+                raise ValueError(f"bad FAMILY id {pid!r}: use lowercase latin, e.g. 'oleh'")
+            if not tg.isdigit():
+                raise ValueError(f"bad FAMILY telegram_id {tg!r} for {pid}: must be a number")
+            persons.append(Person(pid, name, int(tg)))
         return cls(persons)
 
     def get(self, pid: str) -> Person | None:
@@ -56,8 +60,8 @@ class People:
 
     @property
     def family(self) -> list[Person]:
-        """People who talk to the bot and can own commitments."""
-        return [p for p in self.all if p.role == "family"]
+        """People who talk to the bot and can own commitments. Currently everyone."""
+        return self.all
 
     @property
     def telegram_ids(self) -> list[int]:
@@ -70,13 +74,5 @@ class People:
         return p.name if p else pid
 
     def describe(self) -> str:
-        """Prompt-friendly list of people."""
-        lines = []
-        for p in self.all:
-            line = f"- {p.id}: {p.name}, {p.role}"
-            if p.related_to:
-                line += f", пов'язано з {self.display_name(p.related_to)}"
-            if p.telegram_id is not None:
-                line += " (пише боту)"
-            lines.append(line)
-        return "\n".join(lines)
+        """Prompt-friendly list: `- id: Name` per line."""
+        return "\n".join(f"- {p.id}: {p.name}" for p in self.all)

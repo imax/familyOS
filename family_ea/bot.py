@@ -58,7 +58,7 @@ def build_bot(
         person = person_of(update)
         assert update.message
         if person is None:
-            # Not on the allowlist: show the id so it can be added to family.yaml.
+            # Not on the allowlist: show the id so it can be added to FAMILY.
             tg_id = update.effective_user.id if update.effective_user else "?"
             await update.message.reply_text(f"{PRIVATE_BOT} Твій Telegram id: {tg_id}")
             return

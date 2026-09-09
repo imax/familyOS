@@ -15,14 +15,7 @@ def db() -> Database:
 
 @pytest.fixture
 def people() -> People:
-    return People(
-        [
-            Person("oleh", "Олег", "family", telegram_id=1),
-            Person("anna", "Анна", "family", telegram_id=2),
-            Person("olia", "Оля", "child"),
-            Person("mariia", "пані Марія", "teacher", related_to="olia"),
-        ]
-    )
+    return People([Person("oleh", "Олег", telegram_id=1), Person("anna", "Анна", telegram_id=2)])
 
 
 @pytest.fixture

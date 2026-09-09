@@ -87,7 +87,7 @@ def test_build_context_sections(db: Database, people: People, oleh: Person) -> N
     now = datetime(2026, 9, 10, 8, 0, tzinfo=KYIV)
     ctx = build_context(db, people, now, oleh, "Хто ремонтував котел?")
     assert "2026-09-10 08:00 (Europe/Kyiv), четвер" in ctx
-    assert "- oleh: Олег, family (пише боту)" in ctx
+    assert "## Сім'я (пишуть боту; решта людей — у memories)\n- oleh: Олег\n- anna: Анна" in ctx
     assert "[#1] Поговорити з пані Марією (Олег, 08.09–20.09)" in ctx
     assert "Сьогодні:\n- [#1]" in ctx
     assert "[#1] 09.09, Олег: Газовик Петро" in ctx

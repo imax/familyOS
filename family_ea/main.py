@@ -11,7 +11,7 @@ from .bot import build_bot
 from .config import Settings
 from .db import Database
 from .llm import Llm
-from .people import People, Person
+from .people import People
 from .pipeline import Pipeline
 from .transcribe import Transcriber
 from .web import build_web
@@ -32,8 +32,8 @@ def build_pipeline(settings: Settings, db: Database, people: People) -> Pipeline
 
 
 async def serve(settings: Settings) -> None:
-    settings.require("telegram_token", "anthropic_api_key", "web_user", "web_password")
-    people = People.load(settings.family_yaml)
+    settings.require("family", "telegram_token", "anthropic_api_key", "web_user", "web_password")
+    people = People.from_env(settings.family or "")
     db = Database(settings.database_path)
     pipeline = build_pipeline(settings, db, people)
     transcriber = Transcriber(settings.openai_api_key) if settings.openai_api_key else None
@@ -65,10 +65,10 @@ async def serve(settings: Settings) -> None:
 
 async def chat(settings: Settings, as_user: str) -> None:
     """Talk to the pipeline from the terminal, no Telegram. Same database, same code."""
-    settings.require("anthropic_api_key")
-    people = People.load(settings.family_yaml)
-    person: Person | None = people.get(as_user)
-    if person is None or person.role != "family":
+    settings.require("family", "anthropic_api_key")
+    people = People.from_env(settings.family or "")
+    person = people.get(as_user)
+    if person is None:
         known = [p.id for p in people.family]
         raise SystemExit(f"unknown family member: {as_user} (have: {known})")
     db = Database(settings.database_path)

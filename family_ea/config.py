@@ -18,7 +18,7 @@ class Settings:
     anthropic_api_key: str | None
     openai_api_key: str | None
     database_path: Path
-    family_yaml: Path
+    family: str | None  # id:telegram_id:name,... see people.py
     web_user: str | None
     web_password: str | None
     web_url: str | None
@@ -47,7 +47,7 @@ def load_settings() -> Settings:
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
         openai_api_key=_env("OPENAI_API_KEY"),
         database_path=Path(_env("DATABASE_PATH", "./data/family.db") or ""),
-        family_yaml=Path(_env("FAMILY_YAML", "./family.yaml") or ""),
+        family=_env("FAMILY"),
         web_user=_env("WEB_USER"),
         web_password=_env("WEB_PASSWORD"),
         web_url=_env("WEB_URL"),

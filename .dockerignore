@@ -2,7 +2,6 @@
 .venv
 .env
 .env.*
-family.yaml
 data/
 *.db*
 __pycache__/

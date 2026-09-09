@@ -20,7 +20,7 @@ uv run ruff check . && uv run ruff format .
 ```
 family_ea/
   config.py     env -> Settings (.env loaded in dev)
-  people.py     family.yaml -> People (also the Telegram allowlist)
+  people.py     FAMILY env -> People (the two bot users; also the Telegram allowlist)
   db.py         SQLite schema + all queries; dataclasses Message/Memory/Commitment
   context.py    deterministic LLM context, commitment buckets (today/overdue/open/later), FTS query
   llm.py        pydantic output schema, system prompt, the one messages.parse() call
@@ -49,9 +49,12 @@ tests/          deterministic; the LLM is faked, nothing hits the network
 
 - Code, comments, commit messages: English. Bot replies, prompts, UI copy: Ukrainian.
 - Timezone `Europe/Kyiv` for everything user-facing; store ISO UTC in SQLite.
-- Secrets and personal data (`.env`, `family.yaml`, `data/`) are gitignored. This repo
-  is public. Never commit tokens, Telegram ids, or real conversation data, including in
-  tests and fixtures.
+- Secrets and personal data (`.env`, `data/`) are gitignored. This repo is public. Never
+  commit tokens, Telegram ids, real names, or real conversation data, including in docs,
+  prompts, tests, and fixtures. Every name in the repo is a fictional placeholder
+  (Олег, Анна, Оля, пані Марія, газовик Петро); keep it that way.
+- Who is who in the family is knowledge, not config: it lives in memories. Code only
+  knows the bot users from `FAMILY` (id:telegram_id:name).
 - Python 3.12, `uv` for deps, `ruff` for lint/format, `pytest` with `asyncio_mode=auto`.
 - FastAPI modules must not use `from __future__ import annotations`: postponed `Annotated`
   dependencies referencing closure variables break dependency resolution (silent 422s).

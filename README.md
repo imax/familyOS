@@ -26,22 +26,23 @@ Deployed on [Fly.io](https://fly.io) with a persistent volume.
 
 ```bash
 uv sync
-cp .env.example .env          # fill in tokens
-cp family.yaml.example family.yaml
+cp .env.example .env          # fill in tokens and FAMILY
 uv run python -m family_ea            # bot + web on :8080
 uv run python -m family_ea chat --as oleh   # talk to the pipeline without Telegram
 uv run pytest
 ```
 
-`family.yaml`, `.env`, and `data/` are gitignored. They hold Telegram ids,
-secrets, and the database and must never be committed.
+`.env` and `data/` are gitignored. They hold Telegram ids, secrets, and the
+database and must never be committed. Who is who in the family is not config:
+the bot learns it from conversation and keeps it in memories. All names in
+this repo's docs, prompts, and tests are fictional placeholders.
 
 ## Deploying
 
 ```bash
 fly launch --no-deploy        # first time only
 fly volumes create data --size 1 --region waw
-fly secrets set TELEGRAM_TOKEN=... ANTHROPIC_API_KEY=... OPENAI_API_KEY=... WEB_USER=... WEB_PASSWORD=...
+fly secrets set FAMILY=... TELEGRAM_TOKEN=... ANTHROPIC_API_KEY=... OPENAI_API_KEY=... WEB_USER=... WEB_PASSWORD=...
 fly deploy
 ```
 
