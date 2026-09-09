@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block body %}
+<h2>Сьогодні</h2>
+<ul>
+  {% for c in buckets.today %}{% include "_commitment.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
+</ul>
+<h2>Прострочено</h2>
+<ul>
+  {% for c in buckets.overdue %}{% with overdue=True %}{% include "_commitment.html" %}{% endwith %}{% else %}<li class="empty">нічого</li>{% endfor %}
+</ul>
+<h2>Відкрито</h2>
+<ul>
+  {% for c in buckets.open + buckets.later %}{% include "_commitment.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
+</ul>
+<h2>Memories</h2>
+<ul>
+  {% for m in memories %}
+  <li><span class="id">#{{ m.id }}</span>{{ m.text }}<div class="meta">{{ m.created_by | person }}, {{ m.created_at | dt }}</div></li>
+  {% else %}<li class="empty">поки порожньо</li>{% endfor %}
+</ul>
+{% endblock %}

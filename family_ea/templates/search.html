@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Пошук: {{ q }}{% endblock %}
+{% block body %}
+<h2>Commitments · «{{ q }}»</h2>
+<ul>
+  {% for c in commitments %}{% include "_commitment.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
+</ul>
+<h2>Memories · «{{ q }}»</h2>
+<ul>
+  {% for m in memories %}
+  <li><span class="id">#{{ m.id }}</span>{{ m.text }}<div class="meta">{{ m.created_by | person }}, {{ m.created_at | dt }}</div></li>
+  {% else %}<li class="empty">нічого</li>{% endfor %}
+</ul>
+{% endblock %}

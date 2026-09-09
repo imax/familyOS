@@ -1,0 +1,25 @@
+# secrets and private data — never commit
+.env
+.env.*
+!.env.example
+family.yaml
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# tooling
+.claude/settings.local.json
+.DS_Store
+.idea/
+.vscode/

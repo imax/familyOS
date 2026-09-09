@@ -1,0 +1,9 @@
+<li class="{{ 'overdue' if overdue else '' }} status-{{ c.status }}">
+  <span class="id">#{{ c.id }}</span>{{ c.text }}
+  <div class="meta">
+    {% if c.owner %}{{ c.owner | person }} · {% endif %}
+    {% if c | due %}{{ c | due }} · {% endif %}
+    {{ c.created_by | person }}, {{ c.created_at | dt }}
+    {% if c.status != 'open' %} · {{ c.status }}{% endif %}
+  </div>
+</li>

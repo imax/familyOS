@@ -1,0 +1,14 @@
+.git
+.venv
+.env
+.env.*
+family.yaml
+data/
+*.db*
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+docs/
+tests/
+.claude/
+.DS_Store

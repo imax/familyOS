@@ -1,0 +1,18 @@
+# People known to the assistant. Copy to family.yaml (gitignored) and fill in.
+# Keys are stable ids used everywhere (owner, created_by).
+# telegram_id doubles as the allowlist: only listed ids can talk to the bot.
+oleh:
+  name: Олег
+  telegram_id: 123456
+  role: family
+anna:
+  name: Анна
+  telegram_id: 234567
+  role: family
+olia:
+  name: Оля
+  role: child
+mariia:
+  name: пані Марія
+  role: teacher
+  related_to: olia
