@@ -20,7 +20,7 @@ uv run ruff check . && uv run ruff format .
 ```
 family_ea/
   config.py     env -> Settings (.env loaded in dev)
-  people.py     FAMILY env -> People (the two bot users; also the Telegram allowlist)
+  family.py     FAMILY env -> Family/Member (the two bot users; also the Telegram allowlist)
   db.py         SQLite schema + all queries; dataclasses Message/Memory/Commitment
   context.py    deterministic LLM context, commitment buckets (today/overdue/open/later), FTS query
   llm.py        pydantic output schema, system prompt, the one messages.parse() call

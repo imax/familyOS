@@ -17,18 +17,18 @@ from fastapi.templating import Jinja2Templates
 from .config import Settings
 from .context import bucket_commitments, fmt_date, fmt_dt, fmt_due, fts_query
 from .db import Database
-from .people import People
+from .family import Family
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
-def build_web(settings: Settings, people: People, db: Database) -> FastAPI:
+def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["dt"] = lambda iso: fmt_dt(iso, settings.tz)
     templates.env.filters["date"] = fmt_date
     templates.env.filters["due"] = lambda c: fmt_due(c, settings.tz)
-    templates.env.filters["person"] = people.display_name
+    templates.env.filters["person"] = family.display_name
     templates.env.filters["pretty_json"] = lambda s: (
         json.dumps(json.loads(s), ensure_ascii=False, indent=2) if s else ""
     )

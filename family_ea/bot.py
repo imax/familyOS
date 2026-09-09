@@ -18,7 +18,7 @@ from telegram.ext import (
 
 from .config import Settings
 from .db import Database
-from .people import People, Person
+from .family import Family, Member
 from .pipeline import Pipeline
 from .transcribe import Transcriber
 
@@ -34,19 +34,19 @@ def _clip(text: str) -> str:
 
 def build_bot(
     settings: Settings,
-    people: People,
+    family: Family,
     db: Database,
     pipeline: Pipeline,
     transcriber: Transcriber | None,
 ) -> Application:
     assert settings.telegram_token
 
-    def person_of(update: Update) -> Person | None:
+    def person_of(update: Update) -> Member | None:
         if update.effective_user is None:
             return None
-        return people.by_telegram_id(update.effective_user.id)
+        return family.by_telegram_id(update.effective_user.id)
 
-    async def send_outcome(update: Update, person: Person, text: str, is_voice: bool) -> None:
+    async def send_outcome(update: Update, person: Member, text: str, is_voice: bool) -> None:
         assert update.message
         outcome = await pipeline.handle(
             person, text, is_voice=is_voice, tg_message_id=update.message.message_id
@@ -156,7 +156,7 @@ def build_bot(
         )
 
     app = Application.builder().token(settings.telegram_token).post_init(post_init).build()
-    allowed = filters.User(user_id=people.telegram_ids)
+    allowed = filters.User(user_id=family.telegram_ids)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("debug", debug, filters=allowed))
     app.add_handler(CommandHandler("facts", facts, filters=allowed))

@@ -10,8 +10,8 @@ import uvicorn
 from .bot import build_bot
 from .config import Settings
 from .db import Database
+from .family import Family
 from .llm import Llm
-from .people import People
 from .pipeline import Pipeline
 from .transcribe import Transcriber
 from .web import build_web
@@ -26,29 +26,29 @@ def setup_logging() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-def build_pipeline(settings: Settings, db: Database, people: People) -> Pipeline:
+def build_pipeline(settings: Settings, db: Database, family: Family) -> Pipeline:
     llm = Llm(settings.llm_model, settings.llm_effort, api_key=settings.anthropic_api_key)
-    return Pipeline(db, people, llm, settings.tz)
+    return Pipeline(db, family, llm, settings.tz)
 
 
 async def serve(settings: Settings) -> None:
     settings.require("family", "telegram_token", "anthropic_api_key", "web_user", "web_password")
-    people = People.from_env(settings.family or "")
+    family = Family.from_env(settings.family or "")
     db = Database(settings.database_path)
-    pipeline = build_pipeline(settings, db, people)
+    pipeline = build_pipeline(settings, db, family)
     transcriber = Transcriber(settings.openai_api_key) if settings.openai_api_key else None
 
-    tg_app = build_bot(settings, people, db, pipeline, transcriber)
-    web_app = build_web(settings, people, db)
+    tg_app = build_bot(settings, family, db, pipeline, transcriber)
+    web_app = build_web(settings, family, db)
     server = uvicorn.Server(
         uvicorn.Config(web_app, host="0.0.0.0", port=settings.port, log_level="info")
     )
 
     log.info(
-        "starting: model=%s db=%s people=%s voice=%s",
+        "starting: model=%s db=%s family=%s voice=%s",
         settings.llm_model,
         settings.database_path,
-        [p.id for p in people.family],
+        [p.id for p in family.members],
         "on" if transcriber else "off",
     )
     async with tg_app:
@@ -66,13 +66,13 @@ async def serve(settings: Settings) -> None:
 async def chat(settings: Settings, as_user: str) -> None:
     """Talk to the pipeline from the terminal, no Telegram. Same database, same code."""
     settings.require("family", "anthropic_api_key")
-    people = People.from_env(settings.family or "")
-    person = people.get(as_user)
+    family = Family.from_env(settings.family or "")
+    person = family.get(as_user)
     if person is None:
-        known = [p.id for p in people.family]
+        known = [p.id for p in family.members]
         raise SystemExit(f"unknown family member: {as_user} (have: {known})")
     db = Database(settings.database_path)
-    pipeline = build_pipeline(settings, db, people)
+    pipeline = build_pipeline(settings, db, family)
     print(f"chatting as {person.name}; db={settings.database_path}; empty line to quit")
     while True:
         try:

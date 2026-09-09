@@ -12,8 +12,8 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from .db import Database
+from .family import Family
 from .llm import CommitmentOp, LlmResult
-from .people import People
 
 log = logging.getLogger(__name__)
 
@@ -52,20 +52,20 @@ def normalize_date(value: str | None) -> str | None:
         return None
 
 
-def normalize_owner(owner: str | None, people: People) -> str | None:
+def normalize_owner(owner: str | None, family: Family) -> str | None:
     if owner is None:
         return None
-    return owner if any(p.id == owner for p in people.family) else None
+    return owner if any(p.id == owner for p in family.members) else None
 
 
-def _commitment_fields(c: CommitmentOp, people: People, tz: ZoneInfo) -> tuple[dict, list[str]]:
+def _commitment_fields(c: CommitmentOp, family: Family, tz: ZoneInfo) -> tuple[dict, list[str]]:
     """Validated fields present on the op, plus notes about anything dropped."""
     fields: dict[str, str | None] = {}
     notes: list[str] = []
     if c.text is not None and c.text.strip():
         fields["text"] = c.text.strip()
     if c.owner is not None:
-        owner = normalize_owner(c.owner, people)
+        owner = normalize_owner(c.owner, family)
         if owner is None:
             notes.append(f"unknown owner {c.owner!r} -> null")
         fields["owner"] = owner
@@ -92,7 +92,7 @@ def apply_ops(
     *,
     author_id: str,
     message_id: int,
-    people: People,
+    family: Family,
     tz: ZoneInfo,
 ) -> list[Applied]:
     applied: list[Applied] = []
@@ -112,7 +112,7 @@ def apply_ops(
             )
 
     for c in result.commitments:
-        fields, notes = _commitment_fields(c, people, tz)
+        fields, notes = _commitment_fields(c, family, tz)
         note = "; ".join(notes)
         if c.op == "create":
             if "text" not in fields:

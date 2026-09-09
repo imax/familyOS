@@ -1,7 +1,7 @@
 from family_ea.db import Database
+from family_ea.family import Family
 from family_ea.llm import LlmResult
 from family_ea.ops import apply_ops, normalize_due_at
-from family_ea.people import People
 from tests.conftest import KYIV
 
 SPEC_EXAMPLE = {
@@ -35,14 +35,14 @@ def test_normalize_due_at() -> None:
     assert normalize_due_at(None, KYIV) is None
 
 
-def test_apply_ops_spec_example(db: Database, people: People) -> None:
+def test_apply_ops_spec_example(db: Database, family: Family) -> None:
     mid = db.insert_message("oleh", "oleh", "...")
     applied = apply_ops(
         db,
         LlmResult.model_validate(SPEC_EXAMPLE),
         author_id="oleh",
         message_id=mid,
-        people=people,
+        family=family,
         tz=KYIV,
     )
     by = {(a.kind, a.op): a for a in applied}
@@ -58,7 +58,7 @@ def test_apply_ops_spec_example(db: Database, people: People) -> None:
     assert open_items[1].due_at == "2026-09-10T12:30:00Z"
 
 
-def test_apply_ops_validates_and_updates(db: Database, people: People) -> None:
+def test_apply_ops_validates_and_updates(db: Database, family: Family) -> None:
     mid = db.insert_message("oleh", "oleh", "...")
     r = LlmResult.model_validate(
         {
@@ -70,7 +70,7 @@ def test_apply_ops_validates_and_updates(db: Database, people: People) -> None:
             "memories": [{"op": "create", "text": ""}],
         }
     )
-    applied = apply_ops(db, r, author_id="oleh", message_id=mid, people=people, tz=KYIV)
+    applied = apply_ops(db, r, author_id="oleh", message_id=mid, family=family, tz=KYIV)
     assert [a.ok for a in applied] == [False, True, False]
     first = applied[1]
     assert "unknown owner" in first.note and "bad due_at" in first.note
@@ -87,7 +87,7 @@ def test_apply_ops_validates_and_updates(db: Database, people: People) -> None:
             ],
         }
     )
-    applied = apply_ops(db, r2, author_id="oleh", message_id=mid, people=people, tz=KYIV)
+    applied = apply_ops(db, r2, author_id="oleh", message_id=mid, family=family, tz=KYIV)
     assert [(a.op, a.ok) for a in applied] == [
         ("update", True),
         ("close:done", True),

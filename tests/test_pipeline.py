@@ -1,8 +1,8 @@
 import json
 
 from family_ea.db import Database
+from family_ea.family import Family, Member
 from family_ea.llm import LlmCall, LlmError, LlmResult
-from family_ea.people import People, Person
 from family_ea.pipeline import ERROR_REPLY, Pipeline
 from tests.conftest import KYIV
 
@@ -19,13 +19,13 @@ class FakeLlm:
         return LlmCall(self.result, "fake-model", {"input_tokens": 1, "output_tokens": 1}, "req")
 
 
-async def test_pipeline_happy_path(db: Database, people: People, oleh: Person) -> None:
+async def test_pipeline_happy_path(db: Database, family: Family, oleh: Member) -> None:
     llm = FakeLlm(
         LlmResult.model_validate(
             {"reply": "Записав.", "memories": [{"op": "create", "text": "Газовик Петро"}]}
         )
     )
-    outcome = await Pipeline(db, people, llm, KYIV).handle(
+    outcome = await Pipeline(db, family, llm, KYIV).handle(
         oleh, "Приходив газовик Петро", is_voice=True, tg_message_id=10
     )
     assert outcome.reply == "🎙 «Приходив газовик Петро»\n\nЗаписав."
@@ -46,9 +46,9 @@ async def test_pipeline_happy_path(db: Database, people: People, oleh: Person) -
 
 
 async def test_pipeline_llm_failure_keeps_message(
-    db: Database, people: People, oleh: Person
+    db: Database, family: Family, oleh: Member
 ) -> None:
-    outcome = await Pipeline(db, people, FakeLlm(None), KYIV).handle(oleh, "hi")
+    outcome = await Pipeline(db, family, FakeLlm(None), KYIV).handle(oleh, "hi")
     assert outcome.reply == ERROR_REPLY and outcome.error
     stored = db.get_message(outcome.message_id)
     assert stored and "boom" in json.loads(stored.llm_result or "")["error"]

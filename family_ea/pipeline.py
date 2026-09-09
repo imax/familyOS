@@ -10,9 +10,9 @@ from zoneinfo import ZoneInfo
 
 from .context import build_context
 from .db import Database
+from .family import Family, Member
 from .llm import LlmResult, Understander
 from .ops import Applied, apply_ops
-from .people import People, Person
 
 log = logging.getLogger(__name__)
 
@@ -30,15 +30,15 @@ class Outcome:
 
 
 class Pipeline:
-    def __init__(self, db: Database, people: People, llm: Understander, tz: ZoneInfo) -> None:
+    def __init__(self, db: Database, family: Family, llm: Understander, tz: ZoneInfo) -> None:
         self.db = db
-        self.people = people
+        self.family = family
         self.llm = llm
         self.tz = tz
 
     async def handle(
         self,
-        author: Person,
+        author: Member,
         text: str,
         *,
         is_voice: bool = False,
@@ -48,7 +48,7 @@ class Pipeline:
             author.id, author.id, text, is_voice=is_voice, tg_message_id=tg_message_id
         )
         now = datetime.now(self.tz)
-        context = build_context(self.db, self.people, now, author, text)
+        context = build_context(self.db, self.family, now, author, text)
 
         try:
             call = await self.llm.run(context)
@@ -63,7 +63,7 @@ class Pipeline:
             call.result,
             author_id=author.id,
             message_id=message_id,
-            people=self.people,
+            family=self.family,
             tz=self.tz,
         )
         self.db.set_llm_result(

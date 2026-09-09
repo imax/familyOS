@@ -8,7 +8,7 @@ from family_ea.context import (
     render_digest,
 )
 from family_ea.db import Commitment, Database
-from family_ea.people import People, Person
+from family_ea.family import Family, Member
 from tests.conftest import KYIV
 
 
@@ -64,15 +64,15 @@ def test_fts_query() -> None:
     assert fts_query('він сказав "привіт" 12345') == '"сказа"* OR "приві"*'
 
 
-def test_render_digest_caps_open_list(people: People) -> None:
+def test_render_digest_caps_open_list(family: Family) -> None:
     now = datetime(2026, 9, 10, 8, 0, tzinfo=KYIV)
     b = bucket_commitments([_c(i) for i in range(1, 9)], now)
-    text = render_digest(b, people, KYIV, max_open=5)
+    text = render_digest(b, family, KYIV, max_open=5)
     assert "і ще 3" in text
     assert "Сьогодні" not in text
 
 
-def test_build_context_sections(db: Database, people: People, oleh: Person) -> None:
+def test_build_context_sections(db: Database, family: Family, oleh: Member) -> None:
     mid = db.insert_message("oleh", "oleh", "Газовик Петро ремонтував котел")
     db.create_memory("Газовик Петро замінив клапан у котлі 9.09", "oleh", mid)
     db.create_commitment(
@@ -85,7 +85,7 @@ def test_build_context_sections(db: Database, people: People, oleh: Person) -> N
     )
     db.insert_message("bot", "oleh", "Записав.")
     now = datetime(2026, 9, 10, 8, 0, tzinfo=KYIV)
-    ctx = build_context(db, people, now, oleh, "Хто ремонтував котел?")
+    ctx = build_context(db, family, now, oleh, "Хто ремонтував котел?")
     assert "2026-09-10 08:00 (Europe/Kyiv), четвер" in ctx
     assert "## Сім'я (пишуть боту; решта людей — у memories)\n- oleh: Олег\n- anna: Анна" in ctx
     assert "[#1] Поговорити з пані Марією (Олег, 08.09–20.09)" in ctx

@@ -1,4 +1,4 @@
-"""The people who talk to the bot. Everything else about the family lives in memories.
+"""The family members who talk to the bot. Everything else about the family lives in memories.
 
 Configured with one env var so nothing personal ever lands in the repo:
 
@@ -16,21 +16,21 @@ _ID = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 @dataclass(frozen=True)
-class Person:
+class Member:
     id: str
     name: str
     telegram_id: int | None = None
 
 
-class People:
-    def __init__(self, persons: list[Person]) -> None:
+class Family:
+    def __init__(self, persons: list[Member]) -> None:
         if not persons:
             raise ValueError("at least one person is required")
         self._by_id = {p.id: p for p in persons}
         self._by_tg = {p.telegram_id: p for p in persons if p.telegram_id is not None}
 
     @classmethod
-    def from_env(cls, spec: str) -> People:
+    def from_env(cls, spec: str) -> Family:
         """Parse `id:telegram_id:name,id:telegram_id:name`."""
         persons = []
         for chunk in spec.split(","):
@@ -45,23 +45,19 @@ class People:
                 raise ValueError(f"bad FAMILY id {pid!r}: use lowercase latin, e.g. 'oleh'")
             if not tg.isdigit():
                 raise ValueError(f"bad FAMILY telegram_id {tg!r} for {pid}: must be a number")
-            persons.append(Person(pid, name, int(tg)))
+            persons.append(Member(pid, name, int(tg)))
         return cls(persons)
 
-    def get(self, pid: str) -> Person | None:
+    def get(self, pid: str) -> Member | None:
         return self._by_id.get(pid)
 
-    def by_telegram_id(self, tg_id: int) -> Person | None:
+    def by_telegram_id(self, tg_id: int) -> Member | None:
         return self._by_tg.get(tg_id)
 
     @property
-    def all(self) -> list[Person]:
+    def members(self) -> list[Member]:
+        """People who talk to the bot and can own commitments."""
         return list(self._by_id.values())
-
-    @property
-    def family(self) -> list[Person]:
-        """People who talk to the bot and can own commitments. Currently everyone."""
-        return self.all
 
     @property
     def telegram_ids(self) -> list[int]:
@@ -75,4 +71,4 @@ class People:
 
     def describe(self) -> str:
         """Prompt-friendly list: `- id: Name` per line."""
-        return "\n".join(f"- {p.id}: {p.name}" for p in self.all)
+        return "\n".join(f"- {p.id}: {p.name}" for p in self.members)

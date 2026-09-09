@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .db import Commitment, Database, Memory, Message
-from .people import People, Person
+from .family import Family, Member
 
 MEMORY_WINDOW_DAYS = 60
 RECENT_MESSAGES = 20
@@ -106,11 +106,11 @@ def bucket_commitments(items: list[Commitment], now: datetime) -> Buckets:
     return b
 
 
-def commitment_line(c: Commitment, people: People, tz: ZoneInfo, with_id: bool = True) -> str:
+def commitment_line(c: Commitment, family: Family, tz: ZoneInfo, with_id: bool = True) -> str:
     parts = [f"[#{c.id}] " if with_id else "", c.text]
     meta = []
     if c.owner:
-        meta.append(people.display_name(c.owner))
+        meta.append(family.display_name(c.owner))
     due = fmt_due(c, tz)
     if due:
         meta.append(due)
@@ -119,18 +119,18 @@ def commitment_line(c: Commitment, people: People, tz: ZoneInfo, with_id: bool =
     return "".join(parts)
 
 
-def render_digest(b: Buckets, people: People, tz: ZoneInfo, max_open: int = 5) -> str:
+def render_digest(b: Buckets, family: Family, tz: ZoneInfo, max_open: int = 5) -> str:
     """The today / overdue / open block. Used in the LLM context and the morning push."""
     lines = []
     if b.today:
         lines.append("Сьогодні:")
-        lines += [f"- {commitment_line(c, people, tz)}" for c in b.today]
+        lines += [f"- {commitment_line(c, family, tz)}" for c in b.today]
     if b.overdue:
         lines.append("Прострочено:")
-        lines += [f"- {commitment_line(c, people, tz)}" for c in b.overdue]
+        lines += [f"- {commitment_line(c, family, tz)}" for c in b.overdue]
     if b.open:
         lines.append("Без дати:")
-        lines += [f"- {commitment_line(c, people, tz)}" for c in b.open[:max_open]]
+        lines += [f"- {commitment_line(c, family, tz)}" for c in b.open[:max_open]]
         if len(b.open) > max_open:
             lines.append(f"- і ще {len(b.open) - max_open}")
     return "\n".join(lines) if lines else "нічого"
@@ -162,22 +162,22 @@ def fts_query(text: str, max_terms: int = 12) -> str:
 # --- context ------------------------------------------------------------------
 
 
-def _memory_line(m: Memory, people: People, tz: ZoneInfo) -> str:
+def _memory_line(m: Memory, family: Family, tz: ZoneInfo) -> str:
     day = fmt_dt(m.created_at, tz)[:5]
-    return f"[#{m.id}] {day}, {people.display_name(m.created_by)}: {m.text}"
+    return f"[#{m.id}] {day}, {family.display_name(m.created_by)}: {m.text}"
 
 
-def _message_line(msg: Message, people: People, tz: ZoneInfo) -> str:
+def _message_line(msg: Message, family: Family, tz: ZoneInfo) -> str:
     when = fmt_dt(msg.created_at, tz)
     if msg.user_id == "bot":
-        who = f"бот → {people.display_name(msg.chat_with)}"
+        who = f"бот → {family.display_name(msg.chat_with)}"
     else:
-        who = people.display_name(msg.user_id)
+        who = family.display_name(msg.user_id)
     voice = " (голосове)" if msg.is_voice else ""
     return f"[{when}] {who}{voice}: {msg.raw_text}"
 
 
-def build_context(db: Database, people: People, now: datetime, author: Person, text: str) -> str:
+def build_context(db: Database, family: Family, now: datetime, author: Member, text: str) -> str:
     """Assemble everything the LLM needs for one message. Spec section 5.2."""
     tz = now.tzinfo
     assert isinstance(tz, ZoneInfo)
@@ -203,7 +203,7 @@ def build_context(db: Database, people: People, now: datetime, author: Person, t
             "Зараз",
             [f"{now.strftime('%Y-%m-%d %H:%M')} ({tz.key}), {WEEKDAYS_UK[now.weekday()]}"],
         ),
-        section("Сім'я (пишуть боту; решта людей — у memories)", [people.describe()]),
+        section("Сім'я (пишуть боту; решта людей — у memories)", [family.describe()]),
         section(
             "Факти про сім'ю (веде людина, стабільний фон)",
             [facts_text] if facts_text else [],
@@ -211,20 +211,20 @@ def build_context(db: Database, people: People, now: datetime, author: Person, t
         ),
         section(
             "Відкриті commitments (усі)",
-            [f"- {commitment_line(c, people, tz)}" for c in open_items],
+            [f"- {commitment_line(c, family, tz)}" for c in open_items],
         ),
-        section("Сьогодні / прострочено", [render_digest(buckets, people, tz)]),
+        section("Сьогодні / прострочено", [render_digest(buckets, family, tz)]),
         section(
             f"Memories за останні {MEMORY_WINDOW_DAYS} днів",
-            [f"- {_memory_line(m, people, tz)}" for m in recent_memories],
+            [f"- {_memory_line(m, family, tz)}" for m in recent_memories],
         ),
         section(
             "Старіші memories, схожі на повідомлення",
-            [f"- {_memory_line(m, people, tz)}" for m in older_hits],
+            [f"- {_memory_line(m, family, tz)}" for m in older_hits],
         ),
         section(
             "Останні повідомлення",
-            [_message_line(m, people, tz) for m in recent_messages],
+            [_message_line(m, family, tz) for m in recent_messages],
         ),
         section("Нове повідомлення", [f"від {author.id} ({author.name}):\n{text}"]),
     ]

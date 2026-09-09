@@ -18,7 +18,7 @@ class Settings:
     anthropic_api_key: str | None
     openai_api_key: str | None
     database_path: Path
-    family: str | None  # id:telegram_id:name,... see people.py
+    family: str | None  # id:telegram_id:name,... see family.py
     web_user: str | None
     web_password: str | None
     web_url: str | None

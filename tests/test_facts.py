@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from family_ea.context import build_context
 from family_ea.db import Database
-from family_ea.people import People, Person
+from family_ea.family import Family, Member
 from family_ea.web import build_web
 from tests.conftest import KYIV
 from tests.test_web import _settings
@@ -25,17 +25,17 @@ def test_facts_versions(db: Database) -> None:
     assert db.facts_versions() == 2
 
 
-def test_context_shows_facts_or_placeholder(db: Database, people: People, oleh: Person) -> None:
+def test_context_shows_facts_or_placeholder(db: Database, family: Family, oleh: Member) -> None:
     now = datetime(2026, 9, 10, 8, 0, tzinfo=KYIV)
-    ctx = build_context(db, people, now, oleh, "привіт")
+    ctx = build_context(db, family, now, oleh, "привіт")
     assert "## Факти про сім'ю (веде людина, стабільний фон)\nпоки порожньо" in ctx
     db.save_facts("Класна керівниця — пані Марія.", "web")
-    ctx = build_context(db, people, now, oleh, "привіт")
+    ctx = build_context(db, family, now, oleh, "привіт")
     assert "## Факти про сім'ю (веде людина, стабільний фон)\nКласна керівниця — пані Марія." in ctx
 
 
-def test_facts_web_roundtrip(db: Database, people: People) -> None:
-    client = TestClient(build_web(_settings(), people, db))
+def test_facts_web_roundtrip(db: Database, family: Family) -> None:
+    client = TestClient(build_web(_settings(), family, db))
     page = client.get("/facts", headers=_auth())
     assert page.status_code == 200 and "Поки порожньо" in page.text
 

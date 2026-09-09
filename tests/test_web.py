@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from family_ea.config import Settings
 from family_ea.db import Database
-from family_ea.people import People
+from family_ea.family import Family
 from family_ea.web import build_web
 from tests.conftest import KYIV
 
@@ -32,7 +32,7 @@ def _auth(user: str = "u", password: str = "p") -> dict[str, str]:
     return {"Authorization": "Basic " + b64encode(f"{user}:{password}".encode()).decode()}
 
 
-def test_web_pages(db: Database, people: People) -> None:
+def test_web_pages(db: Database, family: Family) -> None:
     mid = db.insert_message("oleh", "oleh", "Газовик Петро", tg_message_id=1)
     db.set_llm_result(mid, '{"output": {"reply": "Записав."}}')
     db.insert_message("bot", "oleh", "Записав.")
@@ -44,7 +44,7 @@ def test_web_pages(db: Database, people: People) -> None:
         source_message_id=mid,
         due_from="2000-01-01",
     )
-    client = TestClient(build_web(_settings(), people, db))
+    client = TestClient(build_web(_settings(), family, db))
 
     assert client.get("/healthz").json() == {"ok": True}
     assert client.get("/").status_code == 401
@@ -63,6 +63,6 @@ def test_web_pages(db: Database, people: People) -> None:
     assert "бот → Олег" in messages.text and "Записав." in messages.text
 
 
-def test_web_refuses_without_configured_auth(db: Database, people: People) -> None:
-    client = TestClient(build_web(_settings(web_user=None, web_password=None), people, db))
+def test_web_refuses_without_configured_auth(db: Database, family: Family) -> None:
+    client = TestClient(build_web(_settings(web_user=None, web_password=None), family, db))
     assert client.get("/", headers=_auth()).status_code == 503
