@@ -62,9 +62,12 @@ def build_bot(
             tg_id = update.effective_user.id if update.effective_user else "?"
             await update.message.reply_text(f"{PRIVATE_BOT} Твій Telegram id: {tg_id}")
             return
+        hint = ""
+        if settings.web_url:
+            hint = f" Факти про сім'ю можна заповнити на web: {settings.web_url}/facts"
         await update.message.reply_text(
             f"Привіт, {person.name}! Пиши або наговорюй що завгодно: що сталося, що треба "
-            "зробити, кого як звати. Питай — відповім з того, що знаю."
+            f"зробити, кого як звати. Питай — відповім з того, що знаю.{hint}"
         )
 
     async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -118,6 +121,18 @@ def build_bot(
             f"<pre>{html.escape(_clip(text))}</pre>", parse_mode=ParseMode.HTML
         )
 
+    async def facts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        person = person_of(update)
+        assert update.message
+        if person is None:
+            return
+        current = db.current_facts()
+        if current and current.text.strip():
+            await update.message.reply_text(_clip(current.text))
+        else:
+            where = f" Заповни на web: {settings.web_url}/facts" if settings.web_url else ""
+            await update.message.reply_text(f"Фактів ще нема.{where}")
+
     async def web(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         person = person_of(update)
         assert update.message
@@ -135,6 +150,7 @@ def build_bot(
             [
                 BotCommand("start", "привітання"),
                 BotCommand("debug", "що LLM повернув на останнє повідомлення"),
+                BotCommand("facts", "факти про сім'ю, які бачить асистент"),
                 BotCommand("web", "лінк на web view"),
             ]
         )
@@ -143,6 +159,7 @@ def build_bot(
     allowed = filters.User(user_id=people.telegram_ids)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("debug", debug, filters=allowed))
+    app.add_handler(CommandHandler("facts", facts, filters=allowed))
     app.add_handler(CommandHandler("web", web, filters=allowed))
     app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(MessageHandler(allowed & filters.VOICE, on_voice))

@@ -191,6 +191,8 @@ def build_context(db: Database, people: People, now: datetime, author: Person, t
         fts_query(text), limit=FTS_LIMIT, exclude_ids={m.id for m in recent_memories}
     )
     recent_messages = db.recent_messages(RECENT_MESSAGES)
+    facts = db.current_facts()
+    facts_text = facts.text.strip() if facts else ""
 
     def section(title: str, lines: list[str], empty: str = "немає") -> str:
         body = "\n".join(lines) if lines else empty
@@ -202,6 +204,11 @@ def build_context(db: Database, people: People, now: datetime, author: Person, t
             [f"{now.strftime('%Y-%m-%d %H:%M')} ({tz.key}), {WEEKDAYS_UK[now.weekday()]}"],
         ),
         section("Сім'я (пишуть боту; решта людей — у memories)", [people.describe()]),
+        section(
+            "Факти про сім'ю (веде людина, стабільний фон)",
+            [facts_text] if facts_text else [],
+            empty="поки порожньо",
+        ),
         section(
             "Відкриті commitments (усі)",
             [f"- {commitment_line(c, people, tz)}" for c in open_items],

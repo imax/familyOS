@@ -33,9 +33,10 @@ uv run pytest
 ```
 
 `.env` and `data/` are gitignored. They hold Telegram ids, secrets, and the
-database and must never be committed. Who is who in the family is not config:
-the bot learns it from conversation and keeps it in memories. All names in
-this repo's docs, prompts, and tests are fictional placeholders.
+database and must never be committed. Who is who in the family is not config
+either: stable background goes into *facts*, a free-text page you edit on the
+web, and everything else the bot learns from conversation as memories. All
+names in this repo's docs, prompts, and tests are fictional placeholders.
 
 ## Deploying
 

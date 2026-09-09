@@ -1,7 +1,8 @@
 """SQLite storage: messages, memories, commitments.
 
 One connection, one process, one writer. Original messages are never mutated;
-memories are soft-deleted; commitments are closed, never removed.
+memories are soft-deleted; commitments are closed, never removed; facts (the
+human-maintained standing context) keep every version.
 """
 
 from __future__ import annotations
@@ -44,6 +45,13 @@ CREATE TABLE IF NOT EXISTS commitments (
   created_at TEXT NOT NULL,
   source_message_id INTEGER NOT NULL,
   closed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS facts (
+  id INTEGER PRIMARY KEY,           -- every save is a new row; the latest one is current
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL          -- 'web' or a family member id
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
@@ -105,6 +113,14 @@ class Commitment:
     @property
     def is_open(self) -> bool:
         return self.status == "open"
+
+
+@dataclass(frozen=True)
+class Facts:
+    id: int
+    text: str
+    created_at: str
+    created_by: str
 
 
 def _message(row: sqlite3.Row) -> Message:
@@ -255,6 +271,24 @@ class Database:
         if exclude_ids:
             out = [m for m in out if m.id not in exclude_ids]
         return out[:limit]
+
+    # --- facts --------------------------------------------------------------
+
+    def current_facts(self) -> Facts | None:
+        row = self.conn.execute("SELECT * FROM facts ORDER BY id DESC LIMIT 1").fetchone()
+        return Facts(**dict(row)) if row else None
+
+    def save_facts(self, text: str, created_by: str) -> int:
+        """Store a new version. Returns its id."""
+        cur = self.conn.execute(
+            "INSERT INTO facts (text, created_at, created_by) VALUES (?, ?, ?)",
+            (text, utc_now_iso(), created_by),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def facts_versions(self) -> int:
+        return int(self.conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0])
 
     # --- commitments --------------------------------------------------------
 

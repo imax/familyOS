@@ -1,4 +1,7 @@
-"""Web view: what the system actually stored. Server-rendered, basic auth, read-only for now."""
+"""Web view: what the system actually stored. Server-rendered, basic auth.
+
+Read-only except `/facts`, the one thing a human edits by hand.
+"""
 
 import json
 import secrets
@@ -6,8 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
@@ -67,6 +70,22 @@ def build_web(settings: Settings, people: People, db: Database) -> FastAPI:
             "index.html",
             {"q": "", "buckets": buckets, "memories": db.list_memories(limit=200)},
         )
+
+    @app.get("/facts", response_class=HTMLResponse, dependencies=[Depends(authed)])
+    async def facts_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(
+            request,
+            "facts.html",
+            {"facts": db.current_facts(), "versions": db.facts_versions()},
+        )
+
+    @app.post("/facts", dependencies=[Depends(authed)])
+    async def facts_save(text: Annotated[str, Form()] = "") -> RedirectResponse:
+        text = text.replace("\r\n", "\n").strip()
+        current = db.current_facts()
+        if text != (current.text if current else ""):
+            db.save_facts(text, "web")
+        return RedirectResponse("/facts", status_code=303)
 
     @app.get("/messages", response_class=HTMLResponse, dependencies=[Depends(authed)])
     async def messages(request: Request) -> HTMLResponse:

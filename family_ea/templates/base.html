@@ -18,11 +18,14 @@
   pre { background: #f6f6f6; padding: .6rem; overflow-x: auto; font-size: .8rem; }
   details summary { cursor: pointer; color: #555; font-size: .85rem; }
   .status-done, .status-dropped { text-decoration: line-through; color: #888; }
+  textarea { width: 100%; box-sizing: border-box; font: inherit; padding: .5rem; }
+  button { font: inherit; padding: .4rem 1rem; margin-top: .5rem; }
 </style>
 </head>
 <body>
 <nav>
   <a href="/">Головна</a>
+  <a href="/facts">Факти</a>
   <a href="/messages">Повідомлення</a>
   <form method="get" action="/"><input type="search" name="q" value="{{ q or '' }}" placeholder="пошук"></form>
 </nav>

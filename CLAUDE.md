@@ -28,7 +28,7 @@ family_ea/
   pipeline.py   store -> context -> LLM -> ops -> reply
   transcribe.py OpenAI gpt-4o-transcribe via httpx
   bot.py        python-telegram-bot handlers (/start /debug /web, text, voice)
-  web.py        FastAPI + Jinja: GET / (?q=), GET /messages, basic auth
+  web.py        FastAPI + Jinja: GET / (?q=), GET/POST /facts, GET /messages, basic auth
   main.py       serve() runs bot + uvicorn in one loop; chat() is a local REPL
 tests/          deterministic; the LLM is faked, nothing hits the network
 ```
@@ -53,8 +53,9 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   commit tokens, Telegram ids, real names, or real conversation data, including in docs,
   prompts, tests, and fixtures. Every name in the repo is a fictional placeholder
   (Олег, Анна, Оля, пані Марія, газовик Петро); keep it that way.
-- Who is who in the family is knowledge, not config: it lives in memories. Code only
-  knows the bot users from `FAMILY` (id:telegram_id:name).
+- Three kinds of knowledge, three owners: `FAMILY` env (bot users, allowlist; code),
+  `facts` (stable background about the family; the human edits it on the web, the LLM only
+  reads it), memories/commitments (everything people tell the bot; the LLM writes them).
 - Python 3.12, `uv` for deps, `ruff` for lint/format, `pytest` with `asyncio_mode=auto`.
 - FastAPI modules must not use `from __future__ import annotations`: postponed `Annotated`
   dependencies referencing closure variables break dependency resolution (silent 422s).

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Факти{% endblock %}
+{% block body %}
+<h2>Факти про сім'ю</h2>
+<p class="meta">Стабільний фон, який завжди бачить асистент: хто є хто, адреси, звички, як до кого
+звертатись. Вільний текст, редагуєш тільки ти. Події і справи сюди не пиши, їх бот веде сам.</p>
+<form method="post" action="/facts">
+  <textarea name="text" rows="20" placeholder="Наприклад: дитина ходить у 3-Б, класна керівниця пані Марія. Живемо на Печерську. Машина Skoda, страховка до квітня.">{{ facts.text if facts else '' }}</textarea>
+  <button type="submit">Зберегти</button>
+</form>
+<p class="meta">
+  {% if facts %}Версія {{ versions }}, збережено {{ facts.created_at | dt }}.{% else %}Поки порожньо.{% endif %}
+</p>
+{% endblock %}
