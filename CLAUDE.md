@@ -36,7 +36,8 @@ family_ea/
   db.py         SQLite schema + all queries; dataclasses Message/Memory/Event/Commitment/
                 Reminder; backup_to() is the online backup behind GET /backup.db
   context.py    deterministic LLM context, event agenda (today/tomorrow/later/recent),
-                commitment buckets (today/overdue/open/later), the digest text, FTS query
+                commitment buckets (today/overdue/open/later), the digest text, the web
+                timeline (overdue / days / undated), FTS query
   llm.py        pydantic output schema, system prompt, the one messages.parse() call
   ops.py        apply LLM ops to db, with validation and an `applied` log
   pipeline.py   store -> context -> LLM -> ops -> reply
@@ -44,8 +45,9 @@ family_ea/
   ical.py       an event or dated commitment -> .ics bytes (timed or all-day)
   bot.py        python-telegram-bot handlers (/start /today /debug /facts /web, text, voice),
                 the 08:30 digest job, the per-minute reminder job, «📅» buttons that send an .ics
-  web.py        FastAPI + Jinja: GET / (?q=), GET/POST /facts, GET/POST /family, GET /messages,
-                GET /events/:id.ics, GET /commitments/:id.ics, GET /backup.db
+  web.py        FastAPI + Jinja: GET / (the timeline; ?q= searches), GET/POST /facts,
+                GET/POST /family, GET /memories, GET /messages, GET /events/:id.ics,
+                GET /commitments/:id.ics, GET /backup.db
   main.py       serve() runs bot + uvicorn in one loop; chat() REPL; pull(); show_log()
 tests/          deterministic; the LLM is faked, nothing hits the network
 ```
@@ -109,6 +111,11 @@ Found on the first day of real use (2026-09-10). Delete when done.
   them as a separate cached block; not worth it until a call costs more than a cent.
 - **Small:** today's commitments in the digest repeat today's date; member names come from
   Telegram profiles and may be Latin, renaming is on `/family`.
+- **Web home is a timeline** (2026-09-10 evening, Things-style: overdue, then days with
+  events, dated commitments and reminders together, today always, then «Без дати»). The
+  digest and `/today` still render the older hierarchy (events, then commitments); if the
+  timeline feels right after a few days, render them from `build_timeline` too: one agenda
+  model, a text and an HTML rendering.
 - **Memories are unused so far** (0 rows in production after a day): everything people
   say is a task, an event or a reminder. Watch whether they are needed at all.
 - **Web login:** basic auth is tiring to type on a phone every time. Replace it with a

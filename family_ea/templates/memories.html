@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Memories{% endblock %}
+{% block body %}
+<h2>Memories (останні {{ memories | length }})</h2>
+<ul>
+  {% for m in memories %}{% include "_memory.html" %}{% else %}<li class="empty">поки порожньо</li>{% endfor %}
+</ul>
+{% endblock %}

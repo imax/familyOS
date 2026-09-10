@@ -1,31 +1,19 @@
 {% extends "base.html" %}
 {% block body %}
-<h2>Події</h2>
-<ul>
-  {% for e in agenda.upcoming %}{% include "_event.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
+{% if timeline.overdue %}
+<h2 class="overdue">Прострочено</h2>
+<ul class="rows overdue">
+  {% for r in timeline.overdue %}{% include "_row.html" %}{% endfor %}
 </ul>
-<h2>Нагадування</h2>
-<ul>
-  {% for r in reminders %}
-  <li><span class="id">#{{ r.id }}</span><b>{{ r.at | dt }}</b> {{ r.text }}<div class="meta">{% if r.who %}{{ r.who | person }}{% else %}усім{% endif %} · {{ r.created_by | person }}, {{ r.created_at | dt }}</div></li>
-  {% else %}<li class="empty">нічого</li>{% endfor %}
+{% endif %}
+{% for day in timeline.days %}
+<h2>{{ day.title }}</h2>
+<ul class="rows dated">
+  {% for r in day.rows %}{% include "_row.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
 </ul>
-<h2>Справи на сьогодні</h2>
-<ul>
-  {% for c in buckets.today %}{% include "_commitment.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
-</ul>
-<h2>Прострочено</h2>
-<ul>
-  {% for c in buckets.overdue %}{% with overdue=True %}{% include "_commitment.html" %}{% endwith %}{% else %}<li class="empty">нічого</li>{% endfor %}
-</ul>
-<h2>Відкрито</h2>
-<ul>
-  {% for c in buckets.open + buckets.later %}{% include "_commitment.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
-</ul>
-<h2>Memories</h2>
-<ul>
-  {% for m in memories %}
-  <li><span class="id">#{{ m.id }}</span>{{ m.text }}<div class="meta">{{ m.created_by | person }}, {{ m.created_at | dt }}</div></li>
-  {% else %}<li class="empty">поки порожньо</li>{% endfor %}
+{% endfor %}
+<h2>Без дати</h2>
+<ul class="rows">
+  {% for r in timeline.undated %}{% include "_row.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
 </ul>
 {% endblock %}

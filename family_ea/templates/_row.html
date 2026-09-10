@@ -1,0 +1,9 @@
+<li class="{{ r.kind }}">
+  <span class="time">{{ r.time }}</span>
+  <span>
+    {%- if r.kind == 'commitment' %}<span class="mark">☐</span>{% elif r.kind == 'reminder' %}<span class="mark">⏰</span>{% endif -%}
+    {{ r.text }}
+    {%- if r.ics_url %} <a class="ical" href="{{ r.ics_url }}" title="в календар (.ics)">📅</a>{% endif %}
+    <span class="meta">{% if r.note %}· {{ r.note }} {% endif %}{% if r.who %}· {{ r.who }} {% endif %}<span class="id">#{{ r.id }}</span></span>
+  </span>
+</li>

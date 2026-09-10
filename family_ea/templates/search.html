@@ -11,8 +11,6 @@
 </ul>
 <h2>Memories · «{{ q }}»</h2>
 <ul>
-  {% for m in memories %}
-  <li><span class="id">#{{ m.id }}</span>{{ m.text }}<div class="meta">{{ m.created_by | person }}, {{ m.created_at | dt }}</div></li>
-  {% else %}<li class="empty">нічого</li>{% endfor %}
+  {% for m in memories %}{% include "_memory.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
 </ul>
 {% endblock %}

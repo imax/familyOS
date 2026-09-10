@@ -20,8 +20,7 @@ from fastapi.templating import Jinja2Templates
 
 from .config import Settings
 from .context import (
-    bucket_commitments,
-    build_agenda,
+    build_timeline,
     fmt_date,
     fmt_dt,
     fmt_due,
@@ -81,17 +80,19 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
                     "memories": db.search_memories(fts_query(q), limit=50),
                 },
             )
-        now = datetime.now(settings.tz)
+        timeline = build_timeline(
+            db.planned_events(),
+            db.open_commitments(),
+            db.pending_reminders(),
+            datetime.now(settings.tz),
+            family,
+        )
+        return templates.TemplateResponse(request, "index.html", {"q": "", "timeline": timeline})
+
+    @app.get("/memories", response_class=HTMLResponse, dependencies=[Depends(authed)])
+    async def memories_page(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(
-            request,
-            "index.html",
-            {
-                "q": "",
-                "agenda": build_agenda(db.planned_events(), now),
-                "reminders": db.pending_reminders(),
-                "buckets": bucket_commitments(db.open_commitments(), now),
-                "memories": db.list_memories(limit=200),
-            },
+            request, "memories.html", {"memories": db.list_memories(limit=200)}
         )
 
     def ics_response(data: bytes, text: str) -> Response:

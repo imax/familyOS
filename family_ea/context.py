@@ -1,4 +1,5 @@
-"""Deterministic context for the LLM, the event agenda, commitment buckets, the digest.
+"""Deterministic context for the LLM, the event agenda, commitment buckets, the digest,
+the web timeline.
 
 Everything here is plain code: what is "today", what is "overdue", which memories
 to show. The LLM only sees the result.
@@ -71,11 +72,19 @@ def event_span(e: Event, tz: ZoneInfo) -> tuple[datetime, datetime]:
     )
 
 
+def fmt_event_time(e: Event, tz: ZoneInfo) -> str:
+    """'15:30–17:00' or '15:30'; '' for an all-day event."""
+    if not e.starts_at:
+        return ""
+    start, end = event_span(e, tz)
+    return f"{start:%H:%M}" + (f"–{end:%H:%M}" if e.until else "")
+
+
 def fmt_event_when(e: Event, tz: ZoneInfo) -> str:
     """'11.09 15:30–17:00', '11.09 15:30', '12.09–19.09' or '12.09'."""
     start, end = event_span(e, tz)
     if e.starts_at:
-        return f"{start:%d.%m %H:%M}" + (f"–{end:%H:%M}" if e.until else "")
+        return f"{start:%d.%m} {fmt_event_time(e, tz)}"
     last = end - timedelta(days=1)
     return f"{start:%d.%m}" if last.date() == start.date() else f"{start:%d.%m}–{last:%d.%m}"
 
@@ -89,7 +98,7 @@ def event_line(
     if with_date:
         when = fmt_event_when(e, tz) + " "
     elif e.starts_at:
-        when = f"{start:%H:%M}" + (f"–{end:%H:%M}" if e.until else "") + " "
+        when = fmt_event_time(e, tz) + " "
     else:
         when = ""
         last = end - timedelta(days=1)
@@ -266,6 +275,151 @@ def digest_text(
     if not lines:
         return None
     return "\n".join(lines) + "\n\nНічого не забули?"
+
+
+# --- timeline -----------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Row:
+    """One line of the timeline, ready to render: a planned event, an open commitment or a
+    pending reminder. Everything is formatted here; the template only lays it out."""
+
+    kind: str  # 'event' | 'commitment' | 'reminder'
+    id: int
+    text: str
+    time: str = ""  # '16:00' (a start); '' for an all-day event or an untimed commitment
+    note: str = ""  # 'до 17:00' / 'до 19.09': an end still ahead; the due when overdue
+    who: str = ""  # display name; 'усім' for a reminder to everyone; '' when nobody in particular
+    ics_url: str | None = None  # «📅»: an event or a dated commitment
+
+
+@dataclass
+class Day:
+    when: date
+    title: str
+    rows: list[Row] = field(default_factory=list)
+
+
+@dataclass
+class Timeline:
+    """The web home, Things-style: everything dated in one stream by day, the rest apart.
+
+    Overdue commitments on top; then every day that has something, today always, even
+    empty; then the commitments without a date.
+    """
+
+    overdue: list[Row] = field(default_factory=list)
+    days: list[Day] = field(default_factory=list)
+    undated: list[Row] = field(default_factory=list)
+
+
+def day_title(d: date, today: date) -> str:
+    """'Сьогодні, четвер 10.09', 'Завтра, п'ятниця 11.09', 'Середа 07.10'."""
+    name = WEEKDAYS_UK[d.weekday()]
+    if d == today:
+        return f"Сьогодні, {name} {d:%d.%m}"
+    if d == today + timedelta(days=1):
+        return f"Завтра, {name} {d:%d.%m}"
+    return f"{name.capitalize()} {d:%d.%m}"
+
+
+def build_timeline(
+    events: list[Event],
+    commitments: list[Commitment],
+    reminders: list[Reminder],
+    now: datetime,
+    family: Family,
+) -> Timeline:
+    """Place planned events, open commitments and pending reminders on days.
+
+    A thing still running (a multi-day event, an open window) sits on today with «до …»;
+    a reminder whose time passed but is still pending (about to be sent) sits on today too.
+    Within a day: all-day events, then timed things by time, then untimed commitments.
+    """
+    tz = now.tzinfo
+    assert isinstance(tz, ZoneInfo)
+    today = now.date()
+    by_day: dict[date, list[tuple[tuple, Row]]] = {today: []}
+    overdue: list[tuple[str, Row]] = []
+    undated: list[Row] = []
+
+    def place(day: date, key: tuple, row: Row) -> None:
+        by_day.setdefault(day, []).append((key, row))
+
+    def until_note(last: date, day: date) -> str:
+        return f"до {last:%d.%m}" if last > day else ""
+
+    for e in events:
+        if not e.is_planned:
+            continue
+        start, end = event_span(e, tz)
+        first, last = start.date(), (end - timedelta(seconds=1)).date()
+        if last < today:
+            continue
+        day = max(first, today)
+        if not e.starts_at:
+            note = until_note(last, day)
+        elif not e.until:
+            note = ""
+        else:
+            note = f"до {end:%H:%M}" if last == day else f"до {end:%d.%m %H:%M}"
+        row = Row(
+            "event",
+            e.id,
+            e.text,
+            time=f"{start:%H:%M}" if e.starts_at else "",
+            note=note,
+            who=family.display_name(e.who) if e.who else "",
+            ics_url=f"/events/{e.id}.ics",
+        )
+        place(day, (1, start.timestamp(), 0, e.id) if e.starts_at else (0, 0.0, 0, e.id), row)
+
+    for c in commitments:
+        if not c.is_open:
+            continue
+        who = family.display_name(c.owner) if c.owner else ""
+        ics = f"/commitments/{c.id}.ics" if c.has_due else None
+        if c.due_at:
+            due = parse_iso(c.due_at).astimezone(tz)
+            if due < now:
+                late = Row("commitment", c.id, c.text, note=fmt_due(c, tz), who=who, ics_url=ics)
+                overdue.append((c.due_at, late))
+                continue
+            row = Row("commitment", c.id, c.text, time=f"{due:%H:%M}", who=who, ics_url=ics)
+            place(due.date(), (1, due.timestamp(), 2, c.id), row)
+        elif c.due_from or c.due_to:
+            first = date.fromisoformat(c.due_from or c.due_to or "")
+            last = date.fromisoformat(c.due_to or c.due_from or "")
+            if last < today:
+                late = Row("commitment", c.id, c.text, note=fmt_due(c, tz), who=who, ics_url=ics)
+                overdue.append((c.due_to or c.due_from or "", late))
+                continue
+            day = max(first, today)
+            row = Row("commitment", c.id, c.text, note=until_note(last, day), who=who, ics_url=ics)
+            place(day, (2, 0.0, 2, c.id), row)
+        else:
+            undated.append(Row("commitment", c.id, c.text, who=who))
+
+    for r in reminders:
+        if not r.is_pending:
+            continue
+        at = parse_iso(r.at).astimezone(tz)
+        row = Row(
+            "reminder",
+            r.id,
+            r.text,
+            time=f"{at:%H:%M}",
+            who=family.display_name(r.who) if r.who else "усім",
+        )
+        place(max(at.date(), today), (1, at.timestamp(), 1, r.id), row)
+
+    t = Timeline(undated=undated)
+    t.overdue = [row for _, row in sorted(overdue, key=lambda pair: pair[0])]
+    for day in sorted(by_day):
+        rows = [row for _, row in sorted(by_day[day], key=lambda pair: pair[0])]
+        t.days.append(Day(day, day_title(day, today), rows))
+    return t
 
 
 # --- FTS ----------------------------------------------------------------------

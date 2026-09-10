@@ -25,6 +25,12 @@
   .row button { margin-top: 0; }
   .error { color: #b33; }
   .ical { text-decoration: none; margin-left: .4rem; }
+  h2.overdue { color: #b33; }
+  .dated li { display: grid; grid-template-columns: 3.6rem 1fr; column-gap: .5rem; }
+  .time { color: #444; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .mark { margin-right: .25rem; }
+  .reminder, .reminder .time { color: #888; }
+  .rows .meta { display: inline; margin-left: .25rem; }
 </style>
 </head>
 <body>
@@ -32,6 +38,7 @@
   <a href="/">Головна</a>
   <a href="/facts">Факти</a>
   <a href="/family">Сім'я</a>
+  <a href="/memories">Memories</a>
   <a href="/messages">Повідомлення</a>
   <form method="get" action="/"><input type="search" name="q" value="{{ q or '' }}" placeholder="пошук"></form>
 </nav>

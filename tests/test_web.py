@@ -1,6 +1,7 @@
 from base64 import b64encode
-from datetime import time
+from datetime import datetime, time
 
+import pytest
 from fastapi.testclient import TestClient
 
 from family_ea.config import Settings
@@ -34,6 +35,17 @@ def _auth(user: str = "u", password: str = "p") -> dict[str, str]:
     return {"Authorization": "Basic " + b64encode(f"{user}:{password}".encode()).decode()}
 
 
+def freeze_web_clock(monkeypatch: pytest.MonkeyPatch, now: datetime) -> None:
+    """The home page places things relative to now; pin it so tests do not drift."""
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return now.astimezone(tz) if tz else now
+
+    monkeypatch.setattr("family_ea.web.datetime", _Frozen)
+
+
 def test_web_pages(db: Database, family: Family) -> None:
     mid = db.insert_message("oleh", "oleh", "Газовик Петро", tg_message_id=1)
     db.set_llm_result(mid, '{"output": {"reply": "Записав."}}')
@@ -54,7 +66,8 @@ def test_web_pages(db: Database, family: Family) -> None:
 
     home = client.get("/", headers=_auth())
     assert home.status_code == 200
-    assert "Стоматолог" in home.text and "Анна" in home.text and "Газовик" in home.text
+    assert "Стоматолог" in home.text and "Анна" in home.text
+    assert "Газовик" in client.get("/memories", headers=_auth()).text
 
     search = client.get("/", params={"q": "котл"}, headers=_auth())
     assert "нічого" in search.text  # no memory mentions "котл..."

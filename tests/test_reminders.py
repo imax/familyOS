@@ -1,5 +1,6 @@
 """Reminders: a message to someone at a given moment. Own table, own ops, a per-minute job."""
 
+import html
 from datetime import UTC, datetime
 
 import pytest
@@ -14,7 +15,7 @@ from family_ea.main import llm_result_lines
 from family_ea.ops import apply_ops
 from family_ea.web import build_web
 from tests.conftest import KYIV
-from tests.test_web import _auth, _settings
+from tests.test_web import _auth, _settings, freeze_web_clock
 
 
 def _apply(db: Database, family: Family, ops: list[dict], author: str = "oleh") -> list:
@@ -190,7 +191,10 @@ def test_reminder_recipients(db: Database, family: Family) -> None:
     assert r and [m.id for m in reminder_recipients(r, family)] == ["anna"]
 
 
-def test_web_lists_pending_reminders(db: Database, family: Family) -> None:
+def test_web_lists_pending_reminders(
+    db: Database, family: Family, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    freeze_web_clock(monkeypatch, datetime(2026, 9, 10, 15, 0, tzinfo=KYIV))
     mid = db.insert_message("oleh", "oleh", "...")
     db.create_reminder(
         "Зустріч з пані Марією о 16:00",
@@ -204,7 +208,7 @@ def test_web_lists_pending_reminders(db: Database, family: Family) -> None:
     )
     db.finish_reminder(2, "sent")
     client = TestClient(build_web(_settings(), family, db))
-    home = client.get("/", headers=_auth()).text
-    assert "<h2>Нагадування</h2>" in home
-    assert "11.09 15:00</b> Зустріч з пані Марією о 16:00" in home and "усім" in home
+    home = html.unescape(client.get("/", headers=_auth()).text)
+    assert home.index("Завтра, п'ятниця 11.09") < home.index("15:00</span>")
+    assert "⏰</span>Зустріч з пані Марією о 16:00" in home and "усім" in home
     assert "Квіти" not in home
