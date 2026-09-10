@@ -18,10 +18,18 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
 from .config import Settings
-from .context import bucket_commitments, fmt_date, fmt_dt, fmt_due, fts_query
+from .context import (
+    bucket_commitments,
+    build_agenda,
+    fmt_date,
+    fmt_dt,
+    fmt_due,
+    fmt_event_when,
+    fts_query,
+)
 from .db import Database
 from .family import Family
-from .ical import commitment_ics, ics_filename
+from .ical import commitment_ics, event_ics, ics_filename
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +42,7 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
     templates.env.filters["dt"] = lambda iso: fmt_dt(iso, settings.tz)
     templates.env.filters["date"] = fmt_date
     templates.env.filters["due"] = lambda c: fmt_due(c, settings.tz)
+    templates.env.filters["when"] = lambda e: fmt_event_when(e, settings.tz)
     templates.env.filters["person"] = family.display_name
     templates.env.filters["pretty_json"] = lambda s: (
         json.dumps(json.loads(s), ensure_ascii=False, indent=2) if s else ""
@@ -66,28 +75,44 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
                 "search.html",
                 {
                     "q": q,
-                    "memories": db.search_memories(fts_query(q), limit=50),
+                    "events": db.search_events(q),
                     "commitments": db.search_commitments(q),
+                    "memories": db.search_memories(fts_query(q), limit=50),
                 },
             )
-        buckets = bucket_commitments(db.open_commitments(), datetime.now(settings.tz))
+        now = datetime.now(settings.tz)
         return templates.TemplateResponse(
             request,
             "index.html",
-            {"q": "", "buckets": buckets, "memories": db.list_memories(limit=200)},
+            {
+                "q": "",
+                "agenda": build_agenda(db.planned_events(), now),
+                "buckets": bucket_commitments(db.open_commitments(), now),
+                "memories": db.list_memories(limit=200),
+            },
         )
+
+    def ics_response(data: bytes, text: str) -> Response:
+        """Open the file and the phone calendar offers to add the event."""
+        return Response(
+            data,
+            media_type="text/calendar; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{ics_filename(text)}"'},
+        )
+
+    @app.get("/events/{eid:int}.ics", dependencies=[Depends(authed)])
+    async def event_ics_file(eid: int) -> Response:
+        e = db.get_event(eid)
+        if e is None:
+            raise HTTPException(status_code=404, detail="no such event")
+        return ics_response(event_ics(e), e.text)
 
     @app.get("/commitments/{cid:int}.ics", dependencies=[Depends(authed)])
     async def commitment_ics_file(cid: int) -> Response:
-        """One dated commitment as an .ics file: open it and the calendar offers to add it."""
         c = db.get_commitment(cid)
         if c is None or not c.has_due:
             raise HTTPException(status_code=404, detail="no such dated commitment")
-        return Response(
-            commitment_ics(c),
-            media_type="text/calendar; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{ics_filename(c)}"'},
-        )
+        return ics_response(commitment_ics(c), c.text)
 
     @app.get("/facts", response_class=HTMLResponse, dependencies=[Depends(authed)])
     async def facts_page(request: Request) -> HTMLResponse:

@@ -21,17 +21,18 @@ uv run ruff check . && uv run ruff format .
 family_ea/
   config.py     env -> Settings (.env loaded in dev)
   family.py     Family over the members table (+ ADMIN_USER_ID); slugify() makes ids from names
-  db.py         SQLite schema + all queries; dataclasses Message/Memory/Commitment
-  context.py    deterministic LLM context, commitment buckets (today/overdue/open/later), FTS query
+  db.py         SQLite schema + all queries; dataclasses Message/Memory/Event/Commitment
+  context.py    deterministic LLM context, event agenda (today/tomorrow/later/recent),
+                commitment buckets (today/overdue/open/later), the digest text, FTS query
   llm.py        pydantic output schema, system prompt, the one messages.parse() call
   ops.py        apply LLM ops to db, with validation and an `applied` log
   pipeline.py   store -> context -> LLM -> ops -> reply
   transcribe.py OpenAI gpt-4o-transcribe via httpx
-  ical.py       one commitment -> .ics bytes (timed: one hour; window: all-day)
+  ical.py       an event or dated commitment -> .ics bytes (timed or all-day)
   bot.py        python-telegram-bot handlers (/start /today /debug /facts /web, text, voice),
                 the 08:30 digest job, «📅» buttons that send an .ics
   web.py        FastAPI + Jinja: GET / (?q=), GET/POST /facts, GET/POST /family, GET /messages,
-                GET /commitments/:id.ics
+                GET /events/:id.ics, GET /commitments/:id.ics
   main.py       serve() runs bot + uvicorn in one loop; chat() is a local REPL
 tests/          deterministic; the LLM is faked, nothing hits the network
 ```
@@ -39,7 +40,10 @@ tests/          deterministic; the LLM is faked, nothing hits the network
 ## Principles
 
 - **LLM understands, code executes.** One structured-output call per incoming message
-  returns `reply` plus memory/commitment ops. Everything else is deterministic code.
+  returns `reply` plus memory/event/commitment ops. Everything else is deterministic code.
+- **Events and commitments are separate tables, not a `kind` column.** An event happens at a
+  time or on a day and then passes (never overdue, only cancelled); a commitment is done or
+  dropped and can be overdue. Different lifecycles, different data.
 - **Original messages are never mutated.** `messages.raw_text` is append-only.
 - **Schema deviation from spec:** `messages.chat_with` (family member whose chat the row
   belongs to) so bot replies can be attributed in context; and `messages.llm_result` holds
@@ -47,8 +51,9 @@ tests/          deterministic; the LLM is faked, nothing hits the network
 - **Commitments close only through the LLM `close` op.** Web done/drop buttons were built
   and removed (2026-09-10, ugly); if closing on the web comes back, it must reuse
   `db.close_commitment`, no parallel logic.
-- **The morning digest is deterministic.** Code renders today/overdue (undated items only on
-  Mondays), no LLM call; the push is stored as a bot message so replies to it have context.
+- **The morning digest is deterministic.** Code renders today's and tomorrow's events, then
+  commitments due today and overdue (undated ones only on Mondays), no LLM call; the push is
+  stored as a bot message so replies to it have context.
 - Keep it small. If a feature isn't testing the spec's hypothesis, it's not in MVP
   (spec section 10 lists what we deliberately don't build).
 

@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block body %}
-<h2>Сьогодні</h2>
+<h2>Події</h2>
+<ul>
+  {% for e in agenda.upcoming %}{% include "_event.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
+</ul>
+<h2>Справи на сьогодні</h2>
 <ul>
   {% for c in buckets.today %}{% include "_commitment.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
 </ul>

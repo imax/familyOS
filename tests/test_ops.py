@@ -1,7 +1,7 @@
 from family_ea.db import Database
 from family_ea.family import Family
 from family_ea.llm import LlmResult
-from family_ea.ops import apply_ops, normalize_due_at
+from family_ea.ops import apply_ops, normalize_datetime
 from tests.conftest import KYIV
 
 SPEC_EXAMPLE = {
@@ -9,6 +9,15 @@ SPEC_EXAMPLE = {
     "memories": [
         {"op": "create", "text": "Газовик Петро замінив клапан у котлі 9.09. Тел +380…"},
         {"op": "delete", "id": 5},
+    ],
+    "events": [
+        {
+            "op": "create",
+            "text": "Стоматолог Олі",
+            "who": "anna",
+            "starts_at": "2026-09-10T15:30:00+03:00",
+        },
+        {"op": "cancel", "id": 9},
     ],
     "commitments": [
         {"op": "create", "text": "Попрати форму Олі", "owner": "anna", "due_from": "2026-09-10"},
@@ -23,16 +32,18 @@ def test_schema_accepts_spec_example() -> None:
     r = LlmResult.model_validate(SPEC_EXAMPLE)
     assert r.reply == "Записав."
     assert [m.op for m in r.memories] == ["create", "delete"]
+    assert [e.op for e in r.events] == ["create", "cancel"]
+    assert LlmResult.model_validate({"reply": "Ок."}).events == []
     assert r.commitments[1].due_at == "2026-09-10T12:30:00Z"
     assert LlmResult.model_validate({"reply": "Ок."}).commitments == []
 
 
-def test_normalize_due_at() -> None:
-    assert normalize_due_at("2026-09-10T15:30:00+03:00", KYIV) == "2026-09-10T12:30:00Z"
-    assert normalize_due_at("2026-09-10T15:30:00", KYIV) == "2026-09-10T12:30:00Z"
-    assert normalize_due_at("2026-09-10T12:30:00Z", KYIV) == "2026-09-10T12:30:00Z"
-    assert normalize_due_at("завтра", KYIV) is None
-    assert normalize_due_at(None, KYIV) is None
+def test_normalize_datetime() -> None:
+    assert normalize_datetime("2026-09-10T15:30:00+03:00", KYIV) == "2026-09-10T12:30:00Z"
+    assert normalize_datetime("2026-09-10T15:30:00", KYIV) == "2026-09-10T12:30:00Z"
+    assert normalize_datetime("2026-09-10T12:30:00Z", KYIV) == "2026-09-10T12:30:00Z"
+    assert normalize_datetime("завтра", KYIV) is None
+    assert normalize_datetime(None, KYIV) is None
 
 
 def test_apply_ops_spec_example(db: Database, family: Family) -> None:
@@ -48,6 +59,8 @@ def test_apply_ops_spec_example(db: Database, family: Family) -> None:
     by = {(a.kind, a.op): a for a in applied}
     assert by[("memory", "create")].ok and by[("memory", "create")].id == 1
     assert by[("memory", "delete")].ok is False  # id 5 never existed
+    assert by[("event", "create")].ok and db.get_event(1).starts_at == "2026-09-10T12:30:00Z"
+    assert by[("event", "cancel")].ok is False  # id 9 never existed
     assert by[("commitment", "update")].ok is False
     assert by[("commitment", "close:done")].ok is False
     created = [a for a in applied if a.kind == "commitment" and a.op == "create"]

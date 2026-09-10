@@ -1,14 +1,13 @@
-"""One commitment as an iCalendar file, so a dated item lands in a phone calendar in a tap."""
+"""An event or a dated commitment as an iCalendar file: one tap and it is in the phone calendar."""
 
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
-from .context import parse_iso
-from .db import Commitment
+from .context import DEFAULT_EVENT_DURATION, parse_iso
+from .db import Commitment, Event
 from .family import slugify
 
-DEFAULT_DURATION = timedelta(hours=1)
 MAX_LINE_OCTETS = 74  # RFC 5545 folds at 75 octets; keep one for the continuation space
 
 
@@ -32,35 +31,50 @@ def _fold(line: str) -> list[str]:
     return out
 
 
-def ics_filename(c: Commitment) -> str:
-    return f"{slugify(c.text)[:40]}.ics"
-
-
-def commitment_ics(c: Commitment, now: datetime | None = None) -> bytes:
-    """A VCALENDAR with one VEVENT: timed (due_at, one hour) or all-day (due_from..due_to)."""
-    if not c.has_due:
-        raise ValueError(f"commitment #{c.id} has no dates")
+def _vcalendar(uid: str, summary: str, when: list[str], now: datetime | None) -> bytes:
     stamp = (now or datetime.now(UTC)).astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-    if c.due_at:
-        start = parse_iso(c.due_at).astimezone(UTC)
-        end = start + DEFAULT_DURATION
-        when = [f"DTSTART:{start:%Y%m%dT%H%M%SZ}", f"DTEND:{end:%Y%m%dT%H%M%SZ}"]
-    else:
-        first = date.fromisoformat(c.due_from or c.due_to or "")
-        last = date.fromisoformat(c.due_to or c.due_from or "")
-        after = last + timedelta(days=1)  # DTEND of an all-day event is exclusive
-        when = [f"DTSTART;VALUE=DATE:{first:%Y%m%d}", f"DTEND;VALUE=DATE:{after:%Y%m%d}"]
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
         "PRODID:-//Family EA//EN",
         "BEGIN:VEVENT",
-        f"UID:commitment-{c.id}@family-ea",
+        f"UID:{uid}",
         f"DTSTAMP:{stamp}",
         *when,
-        f"SUMMARY:{_escape(c.text)}",
+        f"SUMMARY:{_escape(summary)}",
         "END:VEVENT",
         "END:VCALENDAR",
     ]
     folded = [piece for line in lines for piece in _fold(line)]
     return ("\r\n".join(folded) + "\r\n").encode("utf-8")
+
+
+def _timed(start_iso: str, end_iso: str | None) -> list[str]:
+    start = parse_iso(start_iso).astimezone(UTC)
+    end = parse_iso(end_iso).astimezone(UTC) if end_iso else start + DEFAULT_EVENT_DURATION
+    return [f"DTSTART:{start:%Y%m%dT%H%M%SZ}", f"DTEND:{end:%Y%m%dT%H%M%SZ}"]
+
+
+def _all_day(first_iso: str | None, last_iso: str | None) -> list[str]:
+    first = date.fromisoformat(first_iso or last_iso or "")
+    last = date.fromisoformat(last_iso or first_iso or "")
+    after = last + timedelta(days=1)  # DTEND of an all-day event is exclusive
+    return [f"DTSTART;VALUE=DATE:{first:%Y%m%d}", f"DTEND;VALUE=DATE:{after:%Y%m%d}"]
+
+
+def ics_filename(text: str) -> str:
+    return f"{slugify(text)[:40]}.ics"
+
+
+def event_ics(e: Event, now: datetime | None = None) -> bytes:
+    """Timed: starts_at until `until` (or one hour). All-day: date_from..date_to inclusive."""
+    when = _timed(e.starts_at, e.until) if e.starts_at else _all_day(e.date_from, e.date_to)
+    return _vcalendar(f"event-{e.id}@family-ea", e.text, when, now)
+
+
+def commitment_ics(c: Commitment, now: datetime | None = None) -> bytes:
+    """A dated commitment: due_at as a one-hour slot, or the due window as all-day."""
+    if not c.has_due:
+        raise ValueError(f"commitment #{c.id} has no dates")
+    when = _timed(c.due_at, None) if c.due_at else _all_day(c.due_from, c.due_to)
+    return _vcalendar(f"commitment-{c.id}@family-ea", c.text, when, now)

@@ -1,4 +1,8 @@
-"""The single structured-output call per message. The LLM understands; code executes."""
+"""The single structured-output call per message. The LLM understands; code executes.
+
+Three kinds of output besides the reply: memories (things to remember), events (things
+that happen at a time or on a day and then pass) and commitments (things to do).
+"""
 
 from __future__ import annotations
 
@@ -18,6 +22,28 @@ class MemoryOp(BaseModel):
     text: str | None = Field(
         default=None,
         description="create: самодостатній текст memory з датою, іменами, номерами",
+    )
+
+
+class EventOp(BaseModel):
+    op: Literal["create", "update", "cancel"]
+    id: int | None = Field(default=None, description="update/cancel: id існуючої події")
+    text: str | None = Field(default=None, description="create/update: що відбувається")
+    who: str | None = Field(
+        default=None, description="id людини, кого це стосується, або null, якщо всієї сім'ї"
+    )
+    starts_at: str | None = Field(
+        default=None,
+        description="початок події з часом, ISO 8601 з offset, напр. 2026-09-11T10:00:00+03:00",
+    )
+    until: str | None = Field(
+        default=None, description="кінець події з часом, ISO 8601 з offset; null, якщо невідомий"
+    )
+    date_from: str | None = Field(
+        default=None, description="цілоденна подія: перший день, YYYY-MM-DD"
+    )
+    date_to: str | None = Field(
+        default=None, description="цілоденна подія: останній день включно, YYYY-MM-DD"
     )
 
 
@@ -42,6 +68,7 @@ class CommitmentOp(BaseModel):
 class LlmResult(BaseModel):
     reply: str = Field(description="Коротка відповідь людині українською")
     memories: list[MemoryOp] = Field(default_factory=list)
+    events: list[EventOp] = Field(default_factory=list)
     commitments: list[CommitmentOp] = Field(default_factory=list)
 
 
@@ -54,7 +81,7 @@ SYSTEM_PROMPT = """\
 
 У контексті є «Факти про сім'ю» — стабільний фон, який веде людина сама: хто є хто, адреси, \
 звички, як до кого звертатись. Спирайся на них, але не редагуй: ти їх не повертаєш. Усе, що \
-людина розповідає, — це memories і commitments.
+людина розповідає, — це memories, events і commitments.
 
 Що повертати:
 - reply — коротка відповідь людині українською. Без зайвих слів і без переказу того, що вона \
@@ -64,11 +91,18 @@ SYSTEM_PROMPT = """\
 Наприклад: «Газовик Петро замінив клапан у котлі 9.09.2026, тел +380…». Люди теж тут: \
 хто є хто в сім'ї (діти, батьки, вчителі, лікарі, майстри), їхні контакти і зв'язки. Нова \
 людина чи новий зв'язок — нова memory.
-- commitments — відкриті петлі: що комусь треба зробити. owner — id людини, яка це робить, \
-або null, якщо обидва чи неясно. Час: due_at — коли є конкретний час (ISO 8601 з offset); \
-due_from / due_to — м'яке вікно в датах. «Завтра» → due_from завтра. «До п'ятниці» → \
-due_to п'ятниця. «Цього або наступного тижня» → due_from сьогодні, due_to неділя \
-наступного тижня. Без згадки часу — без дат.
+- events — події: щось відбудеться у певний час або день, і туди треба прийти або про це \
+треба знати: зустрічі, візити до лікаря, дні народження, гості, поїздки, табір. Час: \
+starts_at (ISO 8601 з offset) і until, якщо кінець відомий; або date_from / date_to \
+(YYYY-MM-DD, включно) для цілоденних і багатоденних. who — id людини, кого це стосується, \
+або null, якщо всієї сім'ї. Подія без дати — не подія: це memory або commitment. Минулі \
+події закривати не треба, вони минають самі. «Скасували» → cancel, «перенесли» → update.
+- commitments — справи: що комусь треба зробити. owner — id людини, яка це робить, або \
+null, якщо обидва чи неясно. Час: due_at — коли є конкретний дедлайн з часом (ISO 8601 з \
+offset); due_from / due_to — м'яке вікно в датах. «Завтра» → due_from завтра. «До \
+п'ятниці» → due_to п'ятниця. «Цього або наступного тижня» → due_from сьогодні, due_to \
+неділя наступного тижня. Без згадки часу — без дат. «Стоматолог о 15:30» — це подія; \
+«записати Олю до стоматолога» — справа.
 
 Правила:
 - Одне повідомлення може дати багато операцій (список із 15 пунктів → 15 операцій) або \
@@ -76,8 +110,8 @@ due_to п'ятниця. «Цього або наступного тижня» �
 - На питання («хто ремонтував котел?», «що висить по Олі?», «що Анна планувала завтра?») \
 відповідай з контексту в reply, без операцій. Якщо в контексті цього нема — так і скажи.
 - Виправлення («ні, не до п'ятниці, а протягом двох тижнів», «Марію закрий», «забудь про \
-газовика») стосуються існуючих записів: знайди їх за id серед відкритих commitments чи \
-memories і поверни update / close / delete. Не створюй дублікат.
+газовика») стосуються існуючих записів: знайди їх за id серед подій, відкритих \
+commitments чи memories і поверни update / cancel / close / delete. Не створюй дублікат.
 - Одна подія — один запис. Якщо схожий запис уже є, не дублюй; за потреби update.
 - «Зробила», «попрала», «домовились» про відкритий commitment — це close зі status done, \
 а не нова memory, якщо тільки там нема цінного контексту на майбутнє.

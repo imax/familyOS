@@ -27,10 +27,10 @@ from telegram.ext import (
 )
 
 from .config import Settings
-from .context import bucket_commitments, digest_text
-from .db import Commitment, Database, Member
+from .context import bucket_commitments, build_agenda, digest_text
+from .db import Commitment, Database, Event, Member
 from .family import Family
-from .ical import commitment_ics, ics_filename
+from .ical import commitment_ics, event_ics, ics_filename
 from .pipeline import Pipeline
 from .transcribe import Transcriber
 
@@ -45,13 +45,17 @@ def _clip(text: str) -> str:
     return text if len(text) <= TG_MAX_LEN else text[: TG_MAX_LEN - 1] + "…"
 
 
-def ics_keyboard(items: list[Commitment]) -> InlineKeyboardMarkup | None:
-    """One «📅 …» button per dated item; tapping it sends that item as an .ics file."""
-    rows = [
-        [InlineKeyboardButton(f"📅 {c.text[:40]}", callback_data=f"ics:{c.id}")]
-        for c in items
-        if c.has_due
-    ]
+def ics_keyboard(items: list[Event | Commitment]) -> InlineKeyboardMarkup | None:
+    """One «📅 …» button per event or dated commitment; tapping it sends an .ics file."""
+    rows = []
+    for item in items:
+        if isinstance(item, Event):
+            data = f"ics:e:{item.id}"
+        elif item.has_due:
+            data = f"ics:c:{item.id}"
+        else:
+            continue
+        rows.append([InlineKeyboardButton(f"📅 {item.text[:40]}", callback_data=data)])
     return InlineKeyboardMarkup(rows) if rows else None
 
 
@@ -98,12 +102,17 @@ def build_bot(
         outcome = await pipeline.handle(
             person, text, is_voice=is_voice, tg_message_id=update.message.message_id
         )
-        touched = [
-            c
-            for a in outcome.applied
-            if a.kind == "commitment" and a.ok and a.id and a.op in ("create", "update")
-            if (c := db.get_commitment(a.id)) is not None
-        ]
+        touched: list[Event | Commitment] = []
+        for a in outcome.applied:
+            if not (a.ok and a.id and a.op in ("create", "update")):
+                continue
+            item: Event | Commitment | None = None
+            if a.kind == "event":
+                item = db.get_event(a.id)
+            elif a.kind == "commitment":
+                item = db.get_commitment(a.id)
+            if item is not None:
+                touched.append(item)
         sent = await update.message.reply_text(
             _clip(outcome.reply), reply_markup=ics_keyboard(touched)
         )
@@ -112,11 +121,14 @@ def build_bot(
     def digest(
         now: datetime, *, include_open: bool
     ) -> tuple[str, InlineKeyboardMarkup | None] | None:
+        agenda = build_agenda(db.planned_events(), now)
         buckets = bucket_commitments(db.open_commitments(), now)
-        text = digest_text(buckets, family, settings.tz, include_open=include_open)
+        text = digest_text(agenda, buckets, family, settings.tz, include_open=include_open)
         if text is None:
             return None
-        return _clip(text), ics_keyboard(buckets.today + buckets.overdue)
+        items: list[Event | Commitment] = [*agenda.today, *agenda.tomorrow]
+        items += [*buckets.today, *buckets.overdue]
+        return _clip(text), ics_keyboard(items)
 
     async def send_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
         """The morning job: one shared digest to every member; silence when it is empty."""
@@ -153,19 +165,29 @@ def build_bot(
         db.set_tg_message_id(mid, sent.message_id)
 
     async def on_ics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """«📅» button: send the commitment as an .ics file to open in the phone calendar."""
+        """«📅» button: send the event or commitment as an .ics file for the phone calendar."""
         q = update.callback_query
         assert q and q.data
         if family.by_telegram_id(q.from_user.id) is None:
             await q.answer(PRIVATE_BOT)
             return
-        c = db.get_commitment(int(q.data.split(":", 1)[1]))
-        if c is None or not c.has_due:
-            await q.answer("Нема такої справи з датою.")
+        _, kind, raw_id = q.data.split(":")
+        payload: tuple[bytes, str] | None = None
+        if kind == "e":
+            e = db.get_event(int(raw_id))
+            if e is not None:
+                payload = (event_ics(e), e.text)
+        else:
+            c = db.get_commitment(int(raw_id))
+            if c is not None and c.has_due:
+                payload = (commitment_ics(c), c.text)
+        if payload is None:
+            await q.answer("Нема такого запису з датою.")
             return
         await q.answer()
+        data, text = payload
         await context.bot.send_document(
-            q.from_user.id, InputFile(commitment_ics(c), filename=ics_filename(c)), caption=c.text
+            q.from_user.id, InputFile(data, filename=ics_filename(text)), caption=text
         )
 
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -281,7 +303,7 @@ def build_bot(
     app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(MessageHandler(allowed & filters.VOICE, on_voice))
     app.add_handler(MessageHandler(~allowed, stranger))
-    app.add_handler(CallbackQueryHandler(on_ics, pattern=r"^ics:\d+$"))
+    app.add_handler(CallbackQueryHandler(on_ics, pattern=r"^ics:[ec]:\d+$"))
     assert app.job_queue
     app.job_queue.run_daily(
         send_digest, time=settings.digest_time.replace(tzinfo=settings.tz), name="digest"

@@ -1,4 +1,4 @@
-"""Deterministic context for the LLM, and the commitment buckets shared with the digest.
+"""Deterministic context for the LLM, the event agenda, commitment buckets, the digest.
 
 Everything here is plain code: what is "today", what is "overdue", which memories
 to show. The LLM only sees the result.
@@ -11,12 +11,14 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .db import Commitment, Database, Member, Memory, Message
+from .db import Commitment, Database, Event, Member, Memory, Message
 from .family import Family
 
 MEMORY_WINDOW_DAYS = 60
 RECENT_MESSAGES = 20
 FTS_LIMIT = 10
+PAST_EVENT_DAYS = 7  # ended events stay in the LLM context this long ("коли був стоматолог?")
+DEFAULT_EVENT_DURATION = timedelta(hours=1)
 WEEKDAYS_UK = ("понеділок", "вівторок", "середа", "четвер", "п'ятниця", "субота", "неділя")
 
 
@@ -51,6 +53,88 @@ def fmt_due(c: Commitment, tz: ZoneInfo) -> str:
     return ""
 
 
+# --- events -------------------------------------------------------------------
+
+
+def event_span(e: Event, tz: ZoneInfo) -> tuple[datetime, datetime]:
+    """Local start and exclusive end. Timed: `until` or one hour. All-day: midnight to midnight."""
+    if e.starts_at:
+        start = parse_iso(e.starts_at).astimezone(tz)
+        end = parse_iso(e.until).astimezone(tz) if e.until else start + DEFAULT_EVENT_DURATION
+        return start, end
+    first = date.fromisoformat(e.date_from or e.date_to or "")
+    last = date.fromisoformat(e.date_to or e.date_from or "")
+    midnight = datetime.min.time()
+    return (
+        datetime.combine(first, midnight, tzinfo=tz),
+        datetime.combine(last + timedelta(days=1), midnight, tzinfo=tz),
+    )
+
+
+def fmt_event_when(e: Event, tz: ZoneInfo) -> str:
+    """'11.09 15:30–17:00', '11.09 15:30', '12.09–19.09' or '12.09'."""
+    start, end = event_span(e, tz)
+    if e.starts_at:
+        return f"{start:%d.%m %H:%M}" + (f"–{end:%H:%M}" if e.until else "")
+    last = end - timedelta(days=1)
+    return f"{start:%d.%m}" if last.date() == start.date() else f"{start:%d.%m}–{last:%d.%m}"
+
+
+def event_line(
+    e: Event, family: Family, tz: ZoneInfo, *, with_id: bool = True, with_date: bool = True
+) -> str:
+    """'[подія #3] 11.09 15:30 Стоматолог (Анна)'; without date: '15:30 Стоматолог (Анна)'."""
+    start, end = event_span(e, tz)
+    meta = [family.display_name(e.who)] if e.who else []
+    if with_date:
+        when = fmt_event_when(e, tz) + " "
+    elif e.starts_at:
+        when = f"{start:%H:%M}" + (f"–{end:%H:%M}" if e.until else "") + " "
+    else:
+        when = ""
+        last = end - timedelta(days=1)
+        if last.date() != start.date():
+            meta.append(f"до {last:%d.%m}")
+    head = f"[подія #{e.id}] " if with_id else ""
+    tail = f" ({', '.join(meta)})" if meta else ""
+    return f"{head}{when}{e.text}{tail}"
+
+
+@dataclass
+class Agenda:
+    today: list[Event] = field(default_factory=list)
+    tomorrow: list[Event] = field(default_factory=list)
+    later: list[Event] = field(default_factory=list)
+    recent: list[Event] = field(default_factory=list)  # ended within PAST_EVENT_DAYS
+
+    @property
+    def upcoming(self) -> list[Event]:
+        return self.today + self.tomorrow + self.later
+
+
+def build_agenda(items: list[Event], now: datetime, past_days: int = PAST_EVENT_DAYS) -> Agenda:
+    """Planned events by day relative to `now` (aware, family tz). A multi-day event lands in
+    the first list it touches; ended events older than `past_days` are left out."""
+    tz = now.tzinfo
+    assert isinstance(tz, ZoneInfo)
+    today = now.date()
+    tomorrow = today + timedelta(days=1)
+    horizon = now - timedelta(days=past_days)
+    a = Agenda()
+    for e in sorted((e for e in items if e.is_planned), key=lambda e: event_span(e, tz)[0]):
+        start, end = event_span(e, tz)
+        first, last = start.date(), (end - timedelta(seconds=1)).date()
+        if first <= today <= last:
+            a.today.append(e)
+        elif first <= tomorrow <= last:
+            a.tomorrow.append(e)
+        elif first > tomorrow:
+            a.later.append(e)
+        elif end >= horizon:
+            a.recent.append(e)
+    return a
+
+
 # --- commitment buckets -------------------------------------------------------
 
 
@@ -60,11 +144,6 @@ class Buckets:
     overdue: list[Commitment] = field(default_factory=list)
     open: list[Commitment] = field(default_factory=list)  # no dates
     later: list[Commitment] = field(default_factory=list)  # dated, in the future
-
-    @property
-    def digest_empty(self) -> bool:
-        """True when a morning digest would have nothing to say."""
-        return not (self.today or self.overdue or self.open)
 
 
 def bucket_commitments(items: list[Commitment], now: datetime) -> Buckets:
@@ -119,7 +198,11 @@ def commitment_line(c: Commitment, family: Family, tz: ZoneInfo, with_id: bool =
     return "".join(parts)
 
 
+# --- digest -------------------------------------------------------------------
+
+
 def _digest_lines(
+    a: Agenda,
     b: Buckets,
     family: Family,
     tz: ZoneInfo,
@@ -128,40 +211,48 @@ def _digest_lines(
     include_open: bool,
     max_open: int,
 ) -> list[str]:
-    def line(c: Commitment) -> str:
+    def ev(e: Event) -> str:
+        return f"- {event_line(e, family, tz, with_id=with_ids, with_date=False)}"
+
+    def cm(c: Commitment) -> str:
         return f"- {commitment_line(c, family, tz, with_id=with_ids)}"
 
     lines: list[str] = []
+    if a.today:
+        lines += ["Сьогодні:", *map(ev, a.today)]
+    if a.tomorrow:
+        lines += ["Завтра:", *map(ev, a.tomorrow)]
     if b.today:
-        lines.append("Сьогодні:")
-        lines += [line(c) for c in b.today]
+        lines += ["Справи на сьогодні:", *map(cm, b.today)]
     if b.overdue:
-        lines.append("Прострочено:")
-        lines += [line(c) for c in b.overdue]
+        lines += ["Прострочено:", *map(cm, b.overdue)]
     if include_open and b.open:
-        lines.append("Без дати:")
-        lines += [line(c) for c in b.open[:max_open]]
+        lines += ["Без дати:", *map(cm, b.open[:max_open])]
         if len(b.open) > max_open:
             lines.append(f"- і ще {len(b.open) - max_open}")
     return lines
 
 
-def render_digest(b: Buckets, family: Family, tz: ZoneInfo, max_open: int = 5) -> str:
-    """The today / overdue / open block with ids, for the LLM context."""
-    lines = _digest_lines(b, family, tz, with_ids=True, include_open=True, max_open=max_open)
+def render_digest(a: Agenda, b: Buckets, family: Family, tz: ZoneInfo, max_open: int = 5) -> str:
+    """Today / tomorrow / due / overdue / open, with ids, for the LLM context."""
+    lines = _digest_lines(a, b, family, tz, with_ids=True, include_open=True, max_open=max_open)
     return "\n".join(lines) if lines else "нічого"
 
 
 def digest_text(
-    b: Buckets, family: Family, tz: ZoneInfo, *, include_open: bool, max_open: int = 5
+    a: Agenda,
+    b: Buckets,
+    family: Family,
+    tz: ZoneInfo,
+    *,
+    include_open: bool,
+    max_open: int = 5,
 ) -> str | None:
-    """The morning push: today and overdue, plus undated items when `include_open`.
-
-    None when there is nothing to say (spec scenario H: an empty morning stays silent).
-    Deterministic on purpose: this is presentation, not understanding.
-    """
+    """The morning push: today's and tomorrow's events, today's and overdue commitments,
+    plus undated ones when `include_open`. None when there is nothing to say: an empty
+    morning stays silent. Deterministic on purpose: presentation, not understanding."""
     lines = _digest_lines(
-        b, family, tz, with_ids=False, include_open=include_open, max_open=max_open
+        a, b, family, tz, with_ids=False, include_open=include_open, max_open=max_open
     )
     if not lines:
         return None
@@ -210,12 +301,13 @@ def _message_line(msg: Message, family: Family, tz: ZoneInfo) -> str:
 
 
 def build_context(db: Database, family: Family, now: datetime, author: Member, text: str) -> str:
-    """Assemble everything the LLM needs for one message. Spec section 5.2."""
+    """Assemble everything the LLM needs for one message."""
     tz = now.tzinfo
     assert isinstance(tz, ZoneInfo)
     since = (now - timedelta(days=MEMORY_WINDOW_DAYS)).astimezone(ZoneInfo("UTC"))
     since_iso = since.isoformat(timespec="seconds").replace("+00:00", "Z")
 
+    agenda = build_agenda(db.planned_events(), now)
     open_items = db.open_commitments()
     buckets = bucket_commitments(open_items, now)
     recent_memories = db.memories_since(since_iso)
@@ -242,10 +334,14 @@ def build_context(db: Database, family: Family, now: datetime, author: Member, t
             empty="поки порожньо",
         ),
         section(
-            "Відкриті commitments (усі)",
+            f"Події (минулі за {PAST_EVENT_DAYS} днів і всі майбутні)",
+            [f"- {event_line(e, family, tz)}" for e in agenda.recent + agenda.upcoming],
+        ),
+        section(
+            "Відкриті commitments (справи, усі)",
             [f"- {commitment_line(c, family, tz)}" for c in open_items],
         ),
-        section("Сьогодні / прострочено", [render_digest(buckets, family, tz)]),
+        section("Сьогодні / прострочено", [render_digest(agenda, buckets, family, tz)]),
         section(
             f"Memories за останні {MEMORY_WINDOW_DAYS} днів",
             [f"- {_memory_line(m, family, tz)}" for m in recent_memories],

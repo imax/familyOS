@@ -15,7 +15,7 @@ def test_timed_event() -> None:
     assert "DTSTAMP:20260910T050000Z" in lines
     assert "UID:commitment-1@family-ea" in lines
     assert "SUMMARY:Стоматолог\\, Оля\\; 2 год" in lines
-    assert ics_filename(c) == "stomatoloh_olia_2_hod.ics"
+    assert ics_filename(c.text) == "stomatoloh_olia_2_hod.ics"
 
 
 def test_all_day_window() -> None:

@@ -36,6 +36,6 @@ def test_build_bot_registers_handlers_and_digest_job(db: Database, family: Famil
 
 def test_ics_keyboard_only_for_dated_items() -> None:
     kb = ics_keyboard([_c(1, text="Стоматолог", due_at="2026-09-10T12:30:00Z"), _c(2)])
-    assert kb and [b.callback_data for row in kb.inline_keyboard for b in row] == ["ics:1"]
+    assert kb and [b.callback_data for row in kb.inline_keyboard for b in row] == ["ics:c:1"]
     assert kb.inline_keyboard[0][0].text == "📅 Стоматолог"
     assert ics_keyboard([_c(2)]) is None

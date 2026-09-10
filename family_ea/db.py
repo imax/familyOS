@@ -1,9 +1,9 @@
-"""SQLite storage: members, messages, memories, commitments, facts.
+"""SQLite storage: members, messages, memories, events, commitments, facts.
 
 One connection, one process, one writer. Original messages are never mutated;
-memories are soft-deleted; commitments are closed, never removed; facts (the
-human-maintained standing context) keep every version; members (who talks to
-the bot) are edited by the admin on the web.
+memories are soft-deleted; commitments are closed and events are cancelled, never
+removed (a past event simply passes); facts (the human-maintained standing context)
+keep every version; members (who talks to the bot) are edited by the admin on the web.
 """
 
 from __future__ import annotations
@@ -46,6 +46,21 @@ CREATE TABLE IF NOT EXISTS commitments (
   created_at TEXT NOT NULL,
   source_message_id INTEGER NOT NULL,
   closed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY,
+  text TEXT NOT NULL,
+  who TEXT,                         -- family member id; NULL = the whole family
+  status TEXT NOT NULL,             -- 'planned' | 'cancelled'; a past event just passes
+  starts_at TEXT,                   -- ISO UTC datetime: a timed event
+  until TEXT,                       -- ISO UTC datetime: its end; NULL = one hour
+  date_from TEXT,                   -- ISO date: an all-day event (one or more days)
+  date_to TEXT,                     -- ISO date, inclusive; NULL = date_from
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  source_message_id INTEGER NOT NULL,
+  cancelled_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS facts (
@@ -129,6 +144,30 @@ class Commitment:
 
 
 @dataclass(frozen=True)
+class Event:
+    id: int
+    text: str
+    who: str | None
+    status: str
+    starts_at: str | None
+    until: str | None
+    date_from: str | None
+    date_to: str | None
+    created_by: str
+    created_at: str
+    source_message_id: int
+    cancelled_at: str | None
+
+    @property
+    def is_planned(self) -> bool:
+        return self.status == "planned"
+
+    @property
+    def all_day(self) -> bool:
+        return self.starts_at is None
+
+
+@dataclass(frozen=True)
 class Facts:
     id: int
     text: str
@@ -157,7 +196,12 @@ def _commitment(row: sqlite3.Row) -> Commitment:
     return Commitment(**dict(row))
 
 
+def _event(row: sqlite3.Row) -> Event:
+    return Event(**dict(row))
+
+
 COMMITMENT_UPDATABLE = ("text", "owner", "due_at", "due_from", "due_to")
+EVENT_UPDATABLE = ("text", "who", "starts_at", "until", "date_from", "date_to")
 
 
 class Database:
@@ -355,6 +399,80 @@ class Database:
             raise ValueError(f"telegram_id {telegram_id} taken") from exc
         self.conn.commit()
         return cur.rowcount == 1
+
+    # --- events -------------------------------------------------------------
+
+    def create_event(
+        self,
+        text: str,
+        *,
+        who: str | None,
+        created_by: str,
+        source_message_id: int,
+        starts_at: str | None = None,
+        until: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO events (text, who, status, starts_at, until, date_from, date_to,"
+            " created_by, created_at, source_message_id)"
+            " VALUES (?, ?, 'planned', ?, ?, ?, ?, ?, ?, ?)",
+            (
+                text,
+                who,
+                starts_at,
+                until,
+                date_from,
+                date_to,
+                created_by,
+                utc_now_iso(),
+                source_message_id,
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def update_event(self, event_id: int, **fields: str | None) -> bool:
+        """Update text/who/when of a planned event. Returns False if not planned."""
+        fields = {k: v for k, v in fields.items() if k in EVENT_UPDATABLE}
+        if not fields:
+            return False
+        assignments = ", ".join(f"{k} = ?" for k in fields)
+        cur = self.conn.execute(
+            f"UPDATE events SET {assignments} WHERE id = ? AND status = 'planned'",
+            (*fields.values(), event_id),
+        )
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def cancel_event(self, event_id: int) -> bool:
+        """Returns False if the event does not exist or is already cancelled."""
+        cur = self.conn.execute(
+            "UPDATE events SET status = 'cancelled', cancelled_at = ?"
+            " WHERE id = ? AND status = 'planned'",
+            (utc_now_iso(), event_id),
+        )
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def get_event(self, event_id: int) -> Event | None:
+        row = self.conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+        return _event(row) if row else None
+
+    def planned_events(self) -> list[Event]:
+        """All planned events, past ones included; callers slice by time (see context)."""
+        rows = self.conn.execute(
+            "SELECT * FROM events WHERE status = 'planned' ORDER BY id"
+        ).fetchall()
+        return [_event(r) for r in rows]
+
+    def search_events(self, q: str, limit: int = 50) -> list[Event]:
+        rows = self.conn.execute(
+            "SELECT * FROM events WHERE ufold(text) LIKE ? ORDER BY id DESC LIMIT ?",
+            (f"%{q.casefold()}%", limit),
+        ).fetchall()
+        return [_event(r) for r in rows]
 
     # --- commitments --------------------------------------------------------
 

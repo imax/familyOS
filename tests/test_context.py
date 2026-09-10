@@ -3,6 +3,7 @@ from datetime import datetime
 import pytest
 
 from family_ea.context import (
+    Agenda,
     bucket_commitments,
     build_context,
     digest_text,
@@ -50,8 +51,6 @@ def test_bucket_commitments() -> None:
     assert {c.id for c in b.overdue} == {2, 5, 6}
     assert [c.id for c in b.later] == [3, 7]
     assert [c.id for c in b.open] == [8]
-    assert b.digest_empty is False
-    assert bucket_commitments([_c(7, due_from="2026-09-12")], now).digest_empty is True
 
 
 def test_fmt_due() -> None:
@@ -70,7 +69,7 @@ def test_fts_query() -> None:
 def test_render_digest_caps_open_list(family: Family) -> None:
     now = datetime(2026, 9, 10, 8, 0, tzinfo=KYIV)
     b = bucket_commitments([_c(i) for i in range(1, 9)], now)
-    text = render_digest(b, family, KYIV, max_open=5)
+    text = render_digest(Agenda(), b, family, KYIV, max_open=5)
     assert "і ще 3" in text
     assert "Сьогодні" not in text
 
@@ -83,19 +82,21 @@ def test_digest_text(family: Family) -> None:
         _c(3, text="Купити лампочки"),
     ]
     b = bucket_commitments(items, now)
-    assert digest_text(b, family, KYIV, include_open=False) == (
-        "Сьогодні:\n- Стоматолог (Анна, 10.09 15:30)\n"
+    assert digest_text(Agenda(), b, family, KYIV, include_open=False) == (
+        "Справи на сьогодні:\n- Стоматолог (Анна, 10.09 15:30)\n"
         "Прострочено:\n- Поговорити з Марією (09.09)\n\n"
         "Нічого не забули?"
     )
-    with_open = digest_text(b, family, KYIV, include_open=True)
+    with_open = digest_text(Agenda(), b, family, KYIV, include_open=True)
     assert with_open and "Без дати:\n- Купити лампочки" in with_open
     assert "[#" not in with_open  # the push has no ids
 
     only_undated = bucket_commitments([_c(3)], now)
-    assert digest_text(only_undated, family, KYIV, include_open=False) is None
-    assert digest_text(only_undated, family, KYIV, include_open=True)
-    assert digest_text(bucket_commitments([], now), family, KYIV, include_open=True) is None
+    assert digest_text(Agenda(), only_undated, family, KYIV, include_open=False) is None
+    assert digest_text(Agenda(), only_undated, family, KYIV, include_open=True)
+    assert (
+        digest_text(Agenda(), bucket_commitments([], now), family, KYIV, include_open=True) is None
+    )
 
 
 def test_build_context_sections(
@@ -118,7 +119,8 @@ def test_build_context_sections(
     assert "2026-09-10 08:00 (Europe/Kyiv), четвер" in ctx
     assert "## Сім'я (пишуть боту; решта людей — у memories)\n- oleh: Олег\n- anna: Анна" in ctx
     assert "[#1] Поговорити з пані Марією (Олег, 08.09–20.09)" in ctx
-    assert "Сьогодні:\n- [#1]" in ctx
+    assert "Справи на сьогодні:\n- [#1]" in ctx
+    assert "## Події (минулі за 7 днів і всі майбутні)\nнемає" in ctx
     assert "[#1] 09.09, Олег: Газовик Петро" in ctx
     assert "[09.09 15:00] бот → Олег: Записав." in ctx
     assert ctx.rstrip().endswith("від oleh (Олег):\nХто ремонтував котел?")

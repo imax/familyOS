@@ -1,7 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Пошук: {{ q }}{% endblock %}
 {% block body %}
-<h2>Commitments · «{{ q }}»</h2>
+<h2>Події · «{{ q }}»</h2>
+<ul>
+  {% for e in events %}{% include "_event.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
+</ul>
+<h2>Справи · «{{ q }}»</h2>
 <ul>
   {% for c in commitments %}{% include "_commitment.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
 </ul>
