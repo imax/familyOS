@@ -286,7 +286,7 @@ yaml
 **Env:**
 
 ```text
-TELEGRAM_TOKEN
+TELEGRAM_BOT_TOKEN
 ANTHROPIC_API_KEY
 TRANSCRIPTION_API_KEY
 DATABASE_PATH       # локально ./data/family.db, на Fly /data/family.db

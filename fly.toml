@@ -4,7 +4,7 @@ primary_region = "waw"
 [build]
   dockerfile = "Dockerfile"
 
-# FAMILY, API tokens and web auth are set with `fly secrets set`, not here.
+# ADMIN_USER_ID, API tokens and web auth are set with `fly secrets set`, not here.
 [env]
   DATABASE_PATH = "/data/family.db"
   TZ = "Europe/Kyiv"

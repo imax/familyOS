@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 from family_ea.context import (
     bucket_commitments,
     build_context,
@@ -7,8 +9,8 @@ from family_ea.context import (
     fts_query,
     render_digest,
 )
-from family_ea.db import Commitment, Database
-from family_ea.family import Family, Member
+from family_ea.db import Commitment, Database, Member
+from family_ea.family import Family
 from tests.conftest import KYIV
 
 
@@ -72,7 +74,10 @@ def test_render_digest_caps_open_list(family: Family) -> None:
     assert "Сьогодні" not in text
 
 
-def test_build_context_sections(db: Database, family: Family, oleh: Member) -> None:
+def test_build_context_sections(
+    db: Database, family: Family, oleh: Member, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("family_ea.db.utc_now_iso", lambda: "2026-09-09T12:00:00Z")
     mid = db.insert_message("oleh", "oleh", "Газовик Петро ремонтував котел")
     db.create_memory("Газовик Петро замінив клапан у котлі 9.09", "oleh", mid)
     db.create_commitment(
@@ -91,5 +96,5 @@ def test_build_context_sections(db: Database, family: Family, oleh: Member) -> N
     assert "[#1] Поговорити з пані Марією (Олег, 08.09–20.09)" in ctx
     assert "Сьогодні:\n- [#1]" in ctx
     assert "[#1] 09.09, Олег: Газовик Петро" in ctx
-    assert "бот → Олег: Записав." in ctx
+    assert "[09.09 15:00] бот → Олег: Записав." in ctx
     assert ctx.rstrip().endswith("від oleh (Олег):\nХто ремонтував котел?")

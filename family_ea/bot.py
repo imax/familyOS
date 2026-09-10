@@ -5,8 +5,9 @@ from __future__ import annotations
 import html
 import json
 import logging
+from urllib.parse import urlencode
 
-from telegram import BotCommand, Update
+from telegram import BotCommand, Message, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     Application,
@@ -17,8 +18,8 @@ from telegram.ext import (
 )
 
 from .config import Settings
-from .db import Database
-from .family import Family, Member
+from .db import Database, Member
+from .family import Family
 from .pipeline import Pipeline
 from .transcribe import Transcriber
 
@@ -32,6 +33,23 @@ def _clip(text: str) -> str:
     return text if len(text) <= TG_MAX_LEN else text[: TG_MAX_LEN - 1] + "…"
 
 
+def family_filter(family: Family) -> filters.BaseFilter:
+    """Messages from family members, or from the admin before their row exists.
+
+    Membership lives in the database and changes at runtime, so this is a live check
+    rather than a static `filters.User` list.
+    """
+
+    class _Family(filters.MessageFilter):
+        def filter(self, message: Message) -> bool:
+            user = message.from_user
+            if user is None:
+                return False
+            return family.is_admin(user.id) or family.by_telegram_id(user.id) is not None
+
+    return _Family(name="family")
+
+
 def build_bot(
     settings: Settings,
     family: Family,
@@ -40,11 +58,18 @@ def build_bot(
     transcriber: Transcriber | None,
 ) -> Application:
     assert settings.telegram_token
+    notified_strangers: set[int] = set()
 
-    def person_of(update: Update) -> Member | None:
-        if update.effective_user is None:
+    def member_of(update: Update) -> Member | None:
+        user = update.effective_user
+        if user is None:
             return None
-        return family.by_telegram_id(update.effective_user.id)
+        member = family.by_telegram_id(user.id)
+        if member is None and family.is_admin(user.id):
+            # First contact from the admin: their row comes from the Telegram profile.
+            member = family.add(user.first_name or user.username or "admin", user.id)
+            log.info("admin joined as member %s", member.id)
+        return member
 
     async def send_outcome(update: Update, person: Member, text: str, is_voice: bool) -> None:
         assert update.message
@@ -55,34 +80,28 @@ def build_bot(
         db.set_tg_message_id(outcome.bot_message_id, sent.message_id)
 
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        person = person_of(update)
-        assert update.message
-        if person is None:
-            # Not on the allowlist: show the id so it can be added to FAMILY.
-            tg_id = update.effective_user.id if update.effective_user else "?"
-            await update.message.reply_text(f"{PRIVATE_BOT} Твій Telegram id: {tg_id}")
-            return
-        hint = ""
+        person = member_of(update)
+        assert update.message and person
+        hints = []
         if settings.web_url:
-            hint = f" Факти про сім'ю можна заповнити на web: {settings.web_url}/facts"
+            hints.append(f"Факти про сім'ю можна заповнити на web: {settings.web_url}/facts")
+            if family.is_admin(person.telegram_id or 0) and len(family.members) == 1:
+                hints.append(f"Додати інших до сім'ї: {settings.web_url}/family")
+        hint = "".join(f" {h}" for h in hints)
         await update.message.reply_text(
             f"Привіт, {person.name}! Пиши або наговорюй що завгодно: що сталося, що треба "
             f"зробити, кого як звати. Питай — відповім з того, що знаю.{hint}"
         )
 
     async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        person = person_of(update)
-        assert update.message and update.message.text
-        if person is None:
-            return
+        person = member_of(update)
+        assert update.message and update.message.text and person
         await update.message.chat.send_action(ChatAction.TYPING)
         await send_outcome(update, person, update.message.text, is_voice=False)
 
     async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        person = person_of(update)
-        assert update.message and update.message.voice
-        if person is None:
-            return
+        person = member_of(update)
+        assert update.message and update.message.voice and person
         if transcriber is None:
             await update.message.reply_text("Голосові не налаштовані: нема OPENAI_API_KEY.")
             return
@@ -104,10 +123,8 @@ def build_bot(
         await send_outcome(update, person, text, is_voice=True)
 
     async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        person = person_of(update)
-        assert update.message
-        if person is None:
-            return
+        person = member_of(update)
+        assert update.message and person
         msg = db.last_user_message(person.id)
         if msg is None:
             await update.message.reply_text("Ще нема повідомлень.")
@@ -122,10 +139,7 @@ def build_bot(
         )
 
     async def facts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        person = person_of(update)
         assert update.message
-        if person is None:
-            return
         current = db.current_facts()
         if current and current.text.strip():
             await update.message.reply_text(_clip(current.text))
@@ -134,16 +148,28 @@ def build_bot(
             await update.message.reply_text(f"Фактів ще нема.{where}")
 
     async def web(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        person = person_of(update)
         assert update.message
-        if person is None:
-            return
         await update.message.reply_text(settings.web_url or "WEB_URL не налаштовано.")
 
-    async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.message:
-            log.info("ignored update from non-family user %s", update.effective_user)
-            await update.message.reply_text(PRIVATE_BOT)
+    async def stranger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Not in the family: say so, and tell the admin once who knocked."""
+        user = update.effective_user
+        if update.message is None or user is None:
+            return
+        log.info("ignored message from non-family user %s", user.id)
+        await update.message.reply_text(f"{PRIVATE_BOT} Твій Telegram id: {user.id}")
+        if user.id in notified_strangers or family.admin_telegram_id is None:
+            return
+        notified_strangers.add(user.id)
+        who = user.full_name + (f" (@{user.username})" if user.username else "")
+        text = f"Боту пише {who}, Telegram id {user.id}."
+        if settings.web_url:
+            query = urlencode({"name": user.first_name or "", "telegram_id": user.id})
+            text += f" Додати до сім'ї: {settings.web_url}/family?{query}"
+        try:
+            await context.bot.send_message(chat_id=family.admin_telegram_id, text=text)
+        except Exception:
+            log.warning("could not notify the admin about user %s", user.id, exc_info=True)
 
     async def post_init(app: Application) -> None:
         await app.bot.set_my_commands(
@@ -156,12 +182,12 @@ def build_bot(
         )
 
     app = Application.builder().token(settings.telegram_token).post_init(post_init).build()
-    allowed = filters.User(user_id=family.telegram_ids)
-    app.add_handler(CommandHandler("start", start))
+    allowed = family_filter(family)
+    app.add_handler(CommandHandler("start", start, filters=allowed))
     app.add_handler(CommandHandler("debug", debug, filters=allowed))
     app.add_handler(CommandHandler("facts", facts, filters=allowed))
     app.add_handler(CommandHandler("web", web, filters=allowed))
     app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(MessageHandler(allowed & filters.VOICE, on_voice))
-    app.add_handler(MessageHandler(~allowed, unknown))
+    app.add_handler(MessageHandler(~allowed, stranger))
     return app

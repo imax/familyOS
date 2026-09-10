@@ -4,8 +4,8 @@ from datetime import datetime
 from fastapi.testclient import TestClient
 
 from family_ea.context import build_context
-from family_ea.db import Database
-from family_ea.family import Family, Member
+from family_ea.db import Database, Member
+from family_ea.family import Family
 from family_ea.web import build_web
 from tests.conftest import KYIV
 from tests.test_web import _settings

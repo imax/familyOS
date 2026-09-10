@@ -26,24 +26,27 @@ Deployed on [Fly.io](https://fly.io) with a persistent volume.
 
 ```bash
 uv sync
-cp .env.example .env          # fill in tokens and FAMILY
+cp .env.example .env          # fill in tokens and ADMIN_USER_ID
 uv run python -m family_ea            # bot + web on :8080
-uv run python -m family_ea chat --as oleh   # talk to the pipeline without Telegram
+uv run python -m family_ea chat --as oleh --name Олег   # the pipeline without Telegram
 uv run pytest
 ```
 
-`.env` and `data/` are gitignored. They hold Telegram ids, secrets, and the
-database and must never be committed. Who is who in the family is not config
-either: stable background goes into *facts*, a free-text page you edit on the
-web, and everything else the bot learns from conversation as memories. All
-names in this repo's docs, prompts, and tests are fictional placeholders.
+`.env` and `data/` are gitignored. They hold the admin's Telegram id, secrets,
+and the database and must never be committed. Who is who in the family is not
+config either: the people who talk to the bot are added on the web (`/family`;
+the admin appears there by writing to the bot, and a stranger who writes gets
+the admin a link to add them), stable background goes into *facts*, a free-text
+page you edit on the web, and everything else the bot learns from conversation
+as memories. All names in this repo's docs, prompts, and tests are fictional
+placeholders.
 
 ## Deploying
 
 ```bash
 fly launch --no-deploy        # first time only
 fly volumes create data --size 1 --region waw
-fly secrets set FAMILY=... TELEGRAM_TOKEN=... ANTHROPIC_API_KEY=... OPENAI_API_KEY=... WEB_USER=... WEB_PASSWORD=...
+fly secrets set ADMIN_USER_ID=... TELEGRAM_BOT_TOKEN=... ANTHROPIC_API_KEY=... OPENAI_API_KEY=... WEB_USER=... WEB_PASSWORD=...
 fly deploy
 ```
 

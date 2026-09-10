@@ -9,8 +9,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .context import build_context
-from .db import Database
-from .family import Family, Member
+from .db import Database, Member
+from .family import Family
 from .llm import LlmResult, Understander
 from .ops import Applied, apply_ops
 

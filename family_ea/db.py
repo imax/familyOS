@@ -1,8 +1,9 @@
-"""SQLite storage: messages, memories, commitments.
+"""SQLite storage: members, messages, memories, commitments, facts.
 
 One connection, one process, one writer. Original messages are never mutated;
 memories are soft-deleted; commitments are closed, never removed; facts (the
-human-maintained standing context) keep every version.
+human-maintained standing context) keep every version; members (who talks to
+the bot) are edited by the admin on the web.
 """
 
 from __future__ import annotations
@@ -52,6 +53,13 @@ CREATE TABLE IF NOT EXISTS facts (
   text TEXT NOT NULL,
   created_at TEXT NOT NULL,
   created_by TEXT NOT NULL          -- 'web' or a family member id
+);
+
+CREATE TABLE IF NOT EXISTS members (
+  id TEXT PRIMARY KEY,              -- latin slug (oleh); what the LLM uses as owner
+  name TEXT NOT NULL,
+  telegram_id INTEGER UNIQUE,       -- the allowlist; NULL until known
+  created_at TEXT NOT NULL
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
@@ -121,6 +129,13 @@ class Facts:
     text: str
     created_at: str
     created_by: str
+
+
+@dataclass(frozen=True)
+class Member:
+    id: str
+    name: str
+    telegram_id: int | None = None
 
 
 def _message(row: sqlite3.Row) -> Message:
@@ -289,6 +304,52 @@ class Database:
 
     def facts_versions(self) -> int:
         return int(self.conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0])
+
+    # --- members ------------------------------------------------------------
+
+    def list_members(self) -> list[Member]:
+        rows = self.conn.execute(
+            "SELECT id, name, telegram_id FROM members ORDER BY rowid"
+        ).fetchall()
+        return [Member(**dict(r)) for r in rows]
+
+    def get_member(self, member_id: str) -> Member | None:
+        row = self.conn.execute(
+            "SELECT id, name, telegram_id FROM members WHERE id = ?", (member_id,)
+        ).fetchone()
+        return Member(**dict(row)) if row else None
+
+    def member_by_telegram_id(self, telegram_id: int) -> Member | None:
+        row = self.conn.execute(
+            "SELECT id, name, telegram_id FROM members WHERE telegram_id = ?", (telegram_id,)
+        ).fetchone()
+        return Member(**dict(row)) if row else None
+
+    def add_member(self, member_id: str, name: str, telegram_id: int | None) -> Member:
+        """Raises ValueError when the id or the telegram_id is already taken."""
+        try:
+            self.conn.execute(
+                "INSERT INTO members (id, name, telegram_id, created_at) VALUES (?, ?, ?, ?)",
+                (member_id, name, telegram_id, utc_now_iso()),
+            )
+        except sqlite3.IntegrityError as exc:
+            self.conn.rollback()
+            raise ValueError(f"member {member_id!r} or telegram_id {telegram_id} taken") from exc
+        self.conn.commit()
+        return Member(member_id, name, telegram_id)
+
+    def update_member(self, member_id: str, *, name: str, telegram_id: int | None) -> bool:
+        """Returns False if there is no such member. Raises ValueError on a taken telegram_id."""
+        try:
+            cur = self.conn.execute(
+                "UPDATE members SET name = ?, telegram_id = ? WHERE id = ?",
+                (name, telegram_id, member_id),
+            )
+        except sqlite3.IntegrityError as exc:
+            self.conn.rollback()
+            raise ValueError(f"telegram_id {telegram_id} taken") from exc
+        self.conn.commit()
+        return cur.rowcount == 1
 
     # --- commitments --------------------------------------------------------
 

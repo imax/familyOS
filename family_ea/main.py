@@ -23,7 +23,8 @@ def setup_logging() -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    for name in ("httpx", "httpx2"):  # the anthropic SDK logs requests via httpx2
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def build_pipeline(settings: Settings, db: Database, family: Family) -> Pipeline:
@@ -32,9 +33,12 @@ def build_pipeline(settings: Settings, db: Database, family: Family) -> Pipeline
 
 
 async def serve(settings: Settings) -> None:
-    settings.require("family", "telegram_token", "anthropic_api_key", "web_user", "web_password")
-    family = Family.from_env(settings.family or "")
+    settings.require("telegram_token", "anthropic_api_key", "web_user", "web_password")
+    if settings.admin_user_id is None:
+        # Bootstrap mode: nobody is let in, but the bot answers strangers with their id.
+        log.warning("ADMIN_USER_ID is not set: write to the bot to learn your id, then set it")
     db = Database(settings.database_path)
+    family = Family(db, settings.admin_user_id)
     pipeline = build_pipeline(settings, db, family)
     transcriber = Transcriber(settings.openai_api_key) if settings.openai_api_key else None
 
@@ -45,7 +49,7 @@ async def serve(settings: Settings) -> None:
     )
 
     log.info(
-        "starting: model=%s db=%s family=%s voice=%s",
+        "starting: model=%s db=%s members=%s voice=%s",
         settings.llm_model,
         settings.database_path,
         [p.id for p in family.members],
@@ -63,15 +67,24 @@ async def serve(settings: Settings) -> None:
             db.close()
 
 
-async def chat(settings: Settings, as_user: str) -> None:
-    """Talk to the pipeline from the terminal, no Telegram. Same database, same code."""
-    settings.require("family", "anthropic_api_key")
-    family = Family.from_env(settings.family or "")
+async def chat(settings: Settings, as_user: str, name: str | None = None) -> None:
+    """Talk to the pipeline from the terminal, no Telegram. Same database, same code.
+
+    `name` creates the member when `as_user` does not exist yet (handy on a fresh db).
+    """
+    settings.require("anthropic_api_key")
+    db = Database(settings.database_path)
+    family = Family(db, settings.admin_user_id)
     person = family.get(as_user)
     if person is None:
-        known = [p.id for p in family.members]
-        raise SystemExit(f"unknown family member: {as_user} (have: {known})")
-    db = Database(settings.database_path)
+        if name is None:
+            known = [p.id for p in family.members]
+            raise SystemExit(
+                f"unknown family member: {as_user} (have: {known});"
+                f" add with --name or on the web at /family"
+            )
+        person = family.add(name, member_id=as_user)
+        print(f"created member {person.id} ({person.name})")
     pipeline = build_pipeline(settings, db, family)
     print(f"chatting as {person.name}; db={settings.database_path}; empty line to quit")
     while True:

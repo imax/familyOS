@@ -11,8 +11,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .db import Commitment, Database, Memory, Message
-from .family import Family, Member
+from .db import Commitment, Database, Member, Memory, Message
+from .family import Family
 
 MEMORY_WINDOW_DAYS = 60
 RECENT_MESSAGES = 20

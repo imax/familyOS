@@ -18,12 +18,13 @@ def main() -> None:
     sub.add_parser("serve", help="run Telegram bot and web view (default)")
     chat_parser = sub.add_parser("chat", help="talk to the pipeline from the terminal")
     chat_parser.add_argument("--as", dest="as_user", required=True, help="family member id")
+    chat_parser.add_argument("--name", help="display name; creates the member if it is new")
     args = parser.parse_args()
 
     setup_logging()
     settings = load_settings()
     if args.command == "chat":
-        asyncio.run(chat(settings, args.as_user))
+        asyncio.run(chat(settings, args.as_user, args.name))
     else:
         asyncio.run(serve(settings))
 

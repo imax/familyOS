@@ -18,7 +18,7 @@ class Settings:
     anthropic_api_key: str | None
     openai_api_key: str | None
     database_path: Path
-    family: str | None  # id:telegram_id:name,... see family.py
+    admin_user_id: int | None  # Telegram id of the admin; everyone else is in the db
     web_user: str | None
     web_password: str | None
     web_url: str | None
@@ -41,13 +41,22 @@ def _env(name: str, default: str | None = None) -> str | None:
     return value.strip()
 
 
+def _env_int(name: str) -> int | None:
+    raw = _env(name)
+    if raw is None:
+        return None
+    if not raw.isdigit():
+        raise SystemExit(f"{name} must be a number (a Telegram user id), got {raw!r}")
+    return int(raw)
+
+
 def load_settings() -> Settings:
     return Settings(
-        telegram_token=_env("TELEGRAM_TOKEN"),
+        telegram_token=_env("TELEGRAM_BOT_TOKEN"),
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
         openai_api_key=_env("OPENAI_API_KEY"),
         database_path=Path(_env("DATABASE_PATH", "./data/family.db") or ""),
-        family=_env("FAMILY"),
+        admin_user_id=_env_int("ADMIN_USER_ID"),
         web_user=_env("WEB_USER"),
         web_password=_env("WEB_PASSWORD"),
         web_url=_env("WEB_URL"),

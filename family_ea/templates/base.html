@@ -20,12 +20,17 @@
   .status-done, .status-dropped { text-decoration: line-through; color: #888; }
   textarea { width: 100%; box-sizing: border-box; font: inherit; padding: .5rem; }
   button { font: inherit; padding: .4rem 1rem; margin-top: .5rem; }
+  .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .row input { font: inherit; padding: .3rem .4rem; }
+  .row button { margin-top: 0; }
+  .error { color: #b33; }
 </style>
 </head>
 <body>
 <nav>
   <a href="/">Головна</a>
   <a href="/facts">Факти</a>
+  <a href="/family">Сім'я</a>
   <a href="/messages">Повідомлення</a>
   <form method="get" action="/"><input type="search" name="q" value="{{ q or '' }}" placeholder="пошук"></form>
 </nav>

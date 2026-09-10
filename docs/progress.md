@@ -3,7 +3,7 @@
 Робочий файл для продовження між сесіями. Оновлювати в кінці кожної сесії.
 Спека: [spec-v3.md](spec-v3.md). Конвенції коду: [CLAUDE.md](../CLAUDE.md).
 
-Оновлено: 2026-09-09, кінець дня.
+Оновлено: 2026-09-10, ранок.
 
 ## Стан
 
@@ -15,25 +15,30 @@ Python 3.12 + uv, ruff, pytest.
 але не перевірені: Docker локально нема, `fly auth login` не робили, app і volume не створені.
 
 **Зріз 1 — зроблено.** Пайплайн повідомлення повністю: store → контекст → один
-`messages.parse()` → apply ops → відповідь. Бот (allowlist з env `FAMILY`, `/start` `/debug`
-`/facts` `/web`, текст, голос через OpenAI `gpt-4o-transcribe`). Web (basic auth, `GET /` з
-бакетами today/overdue/open + memories + `?q=`, `GET/POST /facts` з textarea,
-`GET /messages`). Facts: людський стабільний фон, версії в таблиці, цілком у контексті LLM.
-REPL без Telegram: `uv run python -m family_ea chat --as oleh`. 26 детермінованих тестів,
-LLM підмінений.
+`messages.parse()` → apply ops → відповідь. Бот (allowlist з таблиці `members` + env
+`ADMIN_USER_ID`, `/start` `/debug` `/facts` `/web`, текст, голос через OpenAI
+`gpt-4o-transcribe`). Web (basic auth, `GET /` з бакетами today/overdue/open + memories +
+`?q=`, `GET/POST /facts` з textarea, `GET/POST /family`, `GET /messages`). Facts: людський
+стабільний фон, версії в таблиці, цілком у контексті LLM. REPL без Telegram:
+`uv run python -m family_ea chat --as oleh --name Олег` (`--name` створює member на
+порожній базі). 36 детермінованих тестів, LLM підмінений.
 
 Commitments (таблиця, ops create/update/close, бакети) зроблені вже в зрізі 1, бо схема
 LLM-виходу їх і так містить. Зі зрізу 2 лишились ранковий пуш і web done/drop.
 
-**Не перевірено.** Жодного живого виклику Claude і жодної транскрипції: в оточенні
-розробки не було ключів. Промпт і схема писались наосліп, чекають прогону.
+**Живий Claude працює.** 2026-09-10 перший прогін через REPL на тимчасовій базі:
+повідомлення з фактом і справою дало memory + commitment з `due_from` на завтра, питання
+«хто ремонтував котел?» відповіло з контексту без операцій. Sonnet 5, ~2 с на виклик.
+Транскрипція і Telegram ще не пробувались: нема `TELEGRAM_BOT_TOKEN`, бот у BotFather ще не
+створений.
 
 ## Наступні кроки
 
-1. **Живий прогін.** `.env` з ключами і `FAMILY=id:telegram_id:ім'я,...`
-   (`/start` від невідомого юзера відповідає його id). Прогнати сценарії A, E, G, I, K зі
-   спеки §11 через `chat --as oleh` і через бота. Дивитись `/debug`: чи правильно
-   парсить дати, чи не дублює, чи закриває за id. Правити промпт у `llm.py`.
+1. **Живий прогін.** У `.env` вже є `ANTHROPIC_API_KEY` і `OPENAI_API_KEY`. Лишилось:
+   створити бота в BotFather → `TELEGRAM_BOT_TOKEN`; написати боту будь-що, він відповість
+   твоїм id → `ADMIN_USER_ID`; `WEB_USER`/`WEB_PASSWORD`. Прогнати сценарії A, E, G, I, K зі
+   спеки §11 через `chat --as oleh --name Олег` і через бота. Дивитись `/debug`: чи
+   правильно парсить дати, чи не дублює, чи закриває за id. Правити промпт у `llm.py`.
 2. **Деплой.** `fly auth login` → `fly launch --no-deploy` → `fly volumes create data --size 1
    --region waw` → `fly secrets set ...` → `fly deploy`. Виставити `WEB_URL`. Перевірити,
    що `FAMILY` та інші секрети виставлені.
@@ -62,6 +67,15 @@ LLM-виходу їх і так містить. Зі зрізу 2 лишилис
 LLM-операцію «запропонувати зміну у facts» з підтвердженням людиною. Онбординг як
 LLM-розмова, що сама складає facts, — v1.5.
 
+**Members у базі, не в env (2026-09-10).** `FAMILY=id:tg:name,...` було незручно
+накручено. Тепер в env тільки `ADMIN_USER_ID`: цю людину бот пускає завжди і після першого
+повідомлення сам створює їй рядок у `members` з імені в Telegram. Решту додає адмін на
+web `/family` (ім'я + Telegram id; id-слаг для LLM робиться з імені транслітерацією,
+Олег → oleh). Коли боту пише чужий, він отримує «приватний бот» + свій id, а адмін —
+повідомлення в Telegram з лінком на `/family?name=…&telegram_id=…`, де форма вже
+заповнена. Allowlist у боті живий (фільтр дивиться в базу на кожне повідомлення), тому
+додавання на web діє без рестарту.
+
 ## Відкриті рішення
 
 **Модель.** `claude-sonnet-5`, effort `medium`, обидва з env. Haiku порівняти, коли
@@ -73,9 +87,9 @@ LLM-розмова, що сама складає facts, — v1.5.
 - `messages.llm_result` зберігає `{model, usage, request_id, output, applied}`, не голий вихід.
 - Commitments у зрізі 1, а не 2.
 - `TRANSCRIPTION_API_KEY` → `OPENAI_API_KEY`, транскрипція через httpx, без openai SDK.
-- Замість `family.yaml` (§4 спеки) — env `FAMILY` для двох юзерів + facts (нова таблиця,
-  людина веде), решта людей у memories.
-- Web має один POST уже в зрізі 1: `/facts`.
+- Замість `family.yaml` (§4 спеки) — таблиця `members` (адмін веде на web, в env лише
+  `ADMIN_USER_ID`) + facts (нова таблиця, людина веде), решта людей у memories.
+- Web має два POST уже в зрізі 1: `/facts` і `/family`.
 - Fly app `familyos`, не `family-ea`.
 
 ## Дрібниці
@@ -84,3 +98,5 @@ LLM-розмова, що сама складає facts, — v1.5.
   попередженням. `uv run` це не зачіпає. Ліки: `pyenv install 3.12` або ігнорувати.
 - FastAPI-модулі без `from __future__ import annotations` (ламає `Annotated` dependency).
 - SQLite `LIKE`/`lower()` ASCII-only; для українського пошуку є `ufold()` у `db.py`.
+- Тести, що перевіряють дати в контексті, підміняють `family_ea.db.utc_now_iso` через
+  monkeypatch, інакше вони дрейфують разом із календарем (так упав тест 10.09).

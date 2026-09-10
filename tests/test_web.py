@@ -3,7 +3,7 @@ from base64 import b64encode
 from fastapi.testclient import TestClient
 
 from family_ea.config import Settings
-from family_ea.db import Database
+from family_ea.db import Database, Member
 from family_ea.family import Family
 from family_ea.web import build_web
 from tests.conftest import KYIV
@@ -15,7 +15,7 @@ def _settings(**kw) -> Settings:
         anthropic_api_key=None,
         openai_api_key=None,
         database_path=":memory:",
-        family="oleh:1:Олег,anna:2:Анна",
+        admin_user_id=1,
         web_user="u",
         web_password="p",
         web_url=None,
@@ -66,3 +66,31 @@ def test_web_pages(db: Database, family: Family) -> None:
 def test_web_refuses_without_configured_auth(db: Database, family: Family) -> None:
     client = TestClient(build_web(_settings(web_user=None, web_password=None), family, db))
     assert client.get("/", headers=_auth()).status_code == 503
+
+
+def test_family_web_add_and_edit(db: Database, family: Family) -> None:
+    client = TestClient(build_web(_settings(), family, db))
+    page = client.get("/family", params={"name": "Оля", "telegram_id": "3"}, headers=_auth())
+    assert page.status_code == 200
+    assert 'value="Оля"' in page.text and "oleh" in page.text and "Анна" in page.text
+
+    def post(data: dict[str, str]):
+        return client.post("/family", data=data, headers=_auth(), follow_redirects=False)
+
+    r = post({"name": " Оля ", "telegram_id": " 3 "})
+    assert r.status_code == 303 and r.headers["location"] == "/family"
+    assert family.by_telegram_id(3) == Member("olia", "Оля", 3)
+
+    r = post({"id": "olia", "name": "Ольга", "telegram_id": ""})
+    assert r.headers["location"] == "/family"
+    assert family.get("olia") == Member("olia", "Ольга", None)
+
+    assert "error=" in post({"name": "Дубль", "telegram_id": "1"}).headers["location"]
+    assert "error=" in post({"name": "Хтось", "telegram_id": "abc"}).headers["location"]
+    assert "error=" in post({"name": "", "telegram_id": "5"}).headers["location"]
+    assert post({"id": "ghost", "name": "x"}).status_code == 404
+    assert [m.id for m in family.members] == ["oleh", "anna", "olia"]
+
+    page = client.get("/family", params={"error": "Тест"}, headers=_auth())
+    assert 'class="error">Тест' in page.text
+    assert client.post("/family", data={"name": "x"}).status_code == 401

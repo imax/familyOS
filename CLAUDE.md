@@ -20,7 +20,7 @@ uv run ruff check . && uv run ruff format .
 ```
 family_ea/
   config.py     env -> Settings (.env loaded in dev)
-  family.py     FAMILY env -> Family/Member (the two bot users; also the Telegram allowlist)
+  family.py     Family over the members table (+ ADMIN_USER_ID); slugify() makes ids from names
   db.py         SQLite schema + all queries; dataclasses Message/Memory/Commitment
   context.py    deterministic LLM context, commitment buckets (today/overdue/open/later), FTS query
   llm.py        pydantic output schema, system prompt, the one messages.parse() call
@@ -28,7 +28,7 @@ family_ea/
   pipeline.py   store -> context -> LLM -> ops -> reply
   transcribe.py OpenAI gpt-4o-transcribe via httpx
   bot.py        python-telegram-bot handlers (/start /debug /web, text, voice)
-  web.py        FastAPI + Jinja: GET / (?q=), GET/POST /facts, GET /messages, basic auth
+  web.py        FastAPI + Jinja: GET / (?q=), GET/POST /facts, GET/POST /family, GET /messages
   main.py       serve() runs bot + uvicorn in one loop; chat() is a local REPL
 tests/          deterministic; the LLM is faked, nothing hits the network
 ```
@@ -53,7 +53,8 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   commit tokens, Telegram ids, real names, or real conversation data, including in docs,
   prompts, tests, and fixtures. Every name in the repo is a fictional placeholder
   (Олег, Анна, Оля, пані Марія, газовик Петро); keep it that way.
-- Three kinds of knowledge, three owners: `FAMILY` env (bot users, allowlist; code),
+- Three kinds of knowledge, three owners: `members` table (who talks to the bot, the
+  Telegram allowlist; only `ADMIN_USER_ID` is env, the admin edits the rest on the web),
   `facts` (stable background about the family; the human edits it on the web, the LLM only
   reads it), memories/commitments (everything people tell the bot; the LLM writes them).
 - Python 3.12, `uv` for deps, `ruff` for lint/format, `pytest` with `asyncio_mode=auto`.

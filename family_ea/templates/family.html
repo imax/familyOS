@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Сім'я{% endblock %}
+{% block body %}
+<h2>Сім'я</h2>
+<p class="meta">Хто пише боту. Telegram id — це allowlist; id латиницею асистент використовує як
+owner. Адмін (Telegram id {{ admin_id }}) з'являється тут сам після першого повідомлення боту.
+Коли боту напише хтось чужий, адмін отримає в Telegram лінк сюди з уже підставленим id.</p>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<ul>
+  {% for m in members %}
+  <li>
+    <form method="post" action="/family" class="row">
+      <input type="hidden" name="id" value="{{ m.id }}">
+      <span class="id">{{ m.id }}</span>
+      <input name="name" value="{{ m.name }}" required>
+      <input name="telegram_id" value="{{ m.telegram_id or '' }}" placeholder="Telegram id" inputmode="numeric">
+      <button type="submit">Зберегти</button>
+    </form>
+  </li>
+  {% else %}<li class="empty">поки нікого</li>{% endfor %}
+</ul>
+<h2>Додати</h2>
+<form method="post" action="/family" class="row">
+  <input name="name" value="{{ prefill.name }}" placeholder="Ім'я" required>
+  <input name="telegram_id" value="{{ prefill.telegram_id }}" placeholder="Telegram id (можна пізніше)" inputmode="numeric">
+  <button type="submit">Додати</button>
+</form>
+{% endblock %}

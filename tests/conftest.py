@@ -2,8 +2,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from family_ea.db import Database
-from family_ea.family import Family, Member
+from family_ea.db import Database, Member
+from family_ea.family import Family
 
 KYIV = ZoneInfo("Europe/Kyiv")
 
@@ -14,8 +14,11 @@ def db() -> Database:
 
 
 @pytest.fixture
-def family() -> Family:
-    return Family([Member("oleh", "Олег", telegram_id=1), Member("anna", "Анна", telegram_id=2)])
+def family(db: Database) -> Family:
+    fam = Family(db, admin_telegram_id=1)
+    fam.add("Олег", 1, member_id="oleh")
+    fam.add("Анна", 2, member_id="anna")
+    return fam
 
 
 @pytest.fixture
