@@ -11,7 +11,7 @@
 справжні імена сім'ї; репо видалено на GitHub і перестворено з чистою історією, усі імена
 в репо тепер вигадані (Олег, Анна, Оля, пані Марія, Петро), правило є в CLAUDE.md.
 Python 3.12 + uv, ruff, pytest.
-`Dockerfile` і `fly.toml` (app `familyos`, регіон `waw`, volume `data` → `/data`) готові,
+`Dockerfile` і `fly.toml` (app `familyos`, регіон `fra`, volume `data` → `/data`) готові,
 але не перевірені: Docker локально нема, `fly auth login` не робили, app і volume не створені.
 
 **Зріз 1 — зроблено.** Пайплайн повідомлення повністю: store → контекст → один
@@ -40,7 +40,7 @@ LLM-виходу їх і так містить. Зі зрізу 2 лишилис
    спеки §11 через `chat --as oleh --name Олег` і через бота. Дивитись `/debug`: чи
    правильно парсить дати, чи не дублює, чи закриває за id. Правити промпт у `llm.py`.
 2. **Деплой.** `fly auth login` → `fly launch --no-deploy` → `fly volumes create data --size 1
-   --region waw` → `fly secrets set ...` → `fly deploy`. Виставити `WEB_URL`. Перевірити,
+   --region fra` → `fly secrets set ...` → `fly deploy`. Виставити `WEB_URL`. Перевірити,
    що `FAMILY` та інші секрети виставлені.
 3. **Зріз 2.** JobQueue щодня 08:00 Kyiv кожному з family; код збирає бакети
    (`context.bucket_commitments` + `render_digest` уже є), LLM формулює коротко і завершує

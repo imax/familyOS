@@ -45,7 +45,7 @@ placeholders.
 
 ```bash
 fly launch --no-deploy        # first time only
-fly volumes create data --size 1 --region waw
+fly volumes create data --size 1 --region fra
 fly secrets set ADMIN_USER_ID=... TELEGRAM_BOT_TOKEN=... ANTHROPIC_API_KEY=... OPENAI_API_KEY=... WEB_USER=... WEB_PASSWORD=...
 fly deploy
 ```

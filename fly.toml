@@ -1,5 +1,5 @@
 app = "familyos"
-primary_region = "waw"
+primary_region = "fra"
 
 [build]
   dockerfile = "Dockerfile"
