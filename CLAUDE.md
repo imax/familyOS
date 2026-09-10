@@ -6,7 +6,7 @@ pushes a morning digest and sends reminders at the asked time. Deployed to Fly.i
 
 `docs/spec-v3.md` is the original spec (Ukrainian). It was retired on 2026-09-10: read it
 for the idea, not for what to build next. What to build next comes from real usage; the
-current list is in «Now» below. Delete items there when they ship.
+list is in `docs/status.md` (see «Status» below).
 
 **Start a session with `git log`, and when the question is behaviour, with a fresh copy of
 production:** `pull` then `log` (see Commands).
@@ -97,32 +97,14 @@ tests/          deterministic; the LLM is faked, nothing hits the network
 - Never run a local `serve` with the production bot token while Fly is up: Telegram answers
   409 on getUpdates. Locally use `chat`, or a separate dev bot token.
 
-## Now
+## Status
 
-Found on the first day of real use (2026-09-10). Delete when done.
-
-- **Verify reminders live** (built 2026-09-10 evening, not yet seen in production): ask
-  for one an hour before an event, check `log` shows a `reminder create` with the right
-  `at` and `who`, and that «⏰ …» arrives to the right people; move the event and check the
-  reminder moved with it. Reminders that fall due while the bot is down are sent late,
-  up to `REMINDER_MAX_LATE`; a deploy takes a minute, so this rarely matters.
-- **Prompt caching** is on for the system prompt only (1-hour TTL). Facts and the family
-  list would cache too if they moved before the clock in the context and the call sent
-  them as a separate cached block; not worth it until a call costs more than a cent.
-- **Small:** today's commitments in the digest repeat today's date; member names come from
-  Telegram profiles and may be Latin, renaming is on `/family`.
-- **Web home is a timeline** (2026-09-10 evening, Things-style: overdue, then days with
-  events, dated commitments and reminders together, today always, then «Без дати»). The
-  digest and `/today` still render the older hierarchy (events, then commitments); if the
-  timeline feels right after a few days, render them from `build_timeline` too: one agenda
-  model, a text and an HTML rendering.
-- **Memories are unused so far** (0 rows in production after a day): everything people
-  say is a task, an event or a reminder. Watch whether they are needed at all.
-- **Web login:** basic auth is tiring to type on a phone every time. Replace it with a
-  magic link or similar; the natural source of identity is the bot itself (`/web` could
-  send a signed one-time link that sets a long-lived cookie). Not designed yet.
-- Scenario tests through the real model (inputs → expected ops) are still the way to change
-  the prompt or compare `claude-haiku-4-5` without regressions; not started.
+`docs/status.md` (Ukrainian) is the living description of the system: «Що вміє» (what it
+does, by surface), «Ідеї та туду» (the backlog, found in real use) and «Зміни» (dated
+releases, newest first). A commit that changes behaviour updates it in the same commit:
+the capability text, the backlog item it closes, a line under «Зміни». «Що вміє» is
+written for the people who use the bot: a page or a command name at most, no internals.
+The backlog may name code.
 
 ## Conventions
 

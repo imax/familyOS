@@ -67,4 +67,5 @@ Text and voice in; memories, events, commitments and reminders out; Q&A from
 context; a morning digest at 08:30 with today's and tomorrow's events and the
 day's commitments; reminders («нагадай за годину до…») delivered at the asked
 time; `.ics` links on the web and «📅» buttons in Telegram that send an `.ics`
-file. Deployed; now in real use. Next: whatever hurts.
+file. Deployed; now in real use. What it does today, the backlog and the dated
+changes: [docs/status.md](docs/status.md) (Ukrainian).

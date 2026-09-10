@@ -10,7 +10,7 @@ from family_ea.family import Family, slugify
         ("Олег", "oleh"),
         ("Анна", "anna"),
         ("пані Марія", "pani_mariia"),
-        ("Юлія", "yuliia"),
+        ("Юхим", "yukhym"),
         ("Їжак Й", "yizhak_y"),
         ("Ілля", "illia"),
         ("Tom", "tom"),
