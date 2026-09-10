@@ -11,8 +11,8 @@
 справжні імена сім'ї; репо видалено на GitHub і перестворено з чистою історією, усі імена
 в репо тепер вигадані (Олег, Анна, Оля, пані Марія, Петро), правило є в CLAUDE.md.
 Python 3.12 + uv, ruff, pytest.
-`Dockerfile` і `fly.toml` (app `familyos`, регіон `fra`, volume `data` → `/data`) готові,
-але не перевірені: Docker локально нема, `fly auth login` не робили, app і volume не створені.
+`Dockerfile` і `fly.toml` (app `family-ea`, регіон `fra`, volume `data` → `/data`).
+2026-09-10: app і volume створені, секрети залиті, перший деплой (див. нижче).
 
 **Зріз 1 — зроблено.** Пайплайн повідомлення повністю: store → контекст → один
 `messages.parse()` → apply ops → відповідь. Бот (allowlist з таблиці `members` + env
@@ -90,7 +90,6 @@ web `/family` (ім'я + Telegram id; id-слаг для LLM робиться з
 - Замість `family.yaml` (§4 спеки) — таблиця `members` (адмін веде на web, в env лише
   `ADMIN_USER_ID`) + facts (нова таблиця, людина веде), решта людей у memories.
 - Web має два POST уже в зрізі 1: `/facts` і `/family`.
-- Fly app `familyos`, не `family-ea`.
 
 ## Дрібниці
 
