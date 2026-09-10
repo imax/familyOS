@@ -1,7 +1,7 @@
 """Web view: what the system actually stored. Server-rendered, basic auth.
 
-Read-only except `/facts` and `/family` (the two things a human edits by hand) and
-done/drop on commitments, which go through the same `close_commitment` as the LLM's op.
+Read-only except `/facts` and `/family`, the two things a human edits by hand.
+Commitments are closed only through the LLM's `close` op (web done/drop was removed).
 """
 
 import json
@@ -76,16 +76,6 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
             "index.html",
             {"q": "", "buckets": buckets, "memories": db.list_memories(limit=200)},
         )
-
-    @app.post("/commitments/{cid:int}/{action}", dependencies=[Depends(authed)])
-    async def commitment_close(cid: int, action: str) -> RedirectResponse:
-        """done / drop buttons. Same code path as the LLM's close op."""
-        status = {"done": "done", "drop": "dropped"}.get(action)
-        if status is None:
-            raise HTTPException(status_code=404, detail="unknown action")
-        if not db.close_commitment(cid, status):
-            raise HTTPException(status_code=404, detail="not found or not open")
-        return RedirectResponse("/", status_code=303)
 
     @app.get("/commitments/{cid:int}.ics", dependencies=[Depends(authed)])
     async def commitment_ics_file(cid: int) -> Response:

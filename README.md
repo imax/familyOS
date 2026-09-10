@@ -57,6 +57,6 @@ MIT.
 ## Status
 
 Both slices of the spec (section 12) are built: text and voice in, memories and
-commitments out, Q&A from context, a morning digest at 08:30, done/drop buttons
-and `.ics` links on the web, «📅» buttons in Telegram that send an `.ics` file.
+commitments out, Q&A from context, a morning digest at 08:30, `.ics` links on
+the web, «📅» buttons in Telegram that send an `.ics` file.
 Deployed; now in real use. Next: LLM scenario tests, then whatever hurts.

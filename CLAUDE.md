@@ -31,7 +31,7 @@ family_ea/
   bot.py        python-telegram-bot handlers (/start /today /debug /facts /web, text, voice),
                 the 08:30 digest job, «📅» buttons that send an .ics
   web.py        FastAPI + Jinja: GET / (?q=), GET/POST /facts, GET/POST /family, GET /messages,
-                POST /commitments/:id/done|drop, GET /commitments/:id.ics
+                GET /commitments/:id.ics
   main.py       serve() runs bot + uvicorn in one loop; chat() is a local REPL
 tests/          deterministic; the LLM is faked, nothing hits the network
 ```
@@ -44,7 +44,9 @@ tests/          deterministic; the LLM is faked, nothing hits the network
 - **Schema deviation from spec:** `messages.chat_with` (family member whose chat the row
   belongs to) so bot replies can be attributed in context; and `messages.llm_result` holds
   `{model, usage, output, applied}` rather than the bare LLM output.
-- **Web `done`/`drop` reuse the same code path as the LLM `close` op.** No parallel logic.
+- **Commitments close only through the LLM `close` op.** Web done/drop buttons were built
+  and removed (2026-09-10, ugly); if closing on the web comes back, it must reuse
+  `db.close_commitment`, no parallel logic.
 - **The morning digest is deterministic.** Code renders today/overdue (undated items only on
   Mondays), no LLM call; the push is stored as a bot message so replies to it have context.
 - Keep it small. If a feature isn't testing the spec's hypothesis, it's not in MVP
