@@ -1,8 +1,9 @@
-"""Apply LLM operations to the database. Memories, then events, then commitments.
+"""Apply LLM operations to the database: memories, events, commitments, reminders.
 
-Invalid ops (unknown ids, closed items, bad dates, an event without a date) are ignored
-and logged, never fatal. Closing a commitment goes through `close_commitment`, cancelling
-an event through `cancel_event`; nothing else closes or cancels.
+Invalid ops (unknown ids, closed items, bad dates, an event without a date, a reminder
+without a time) are ignored and logged, never fatal. Closing a commitment goes through
+`close_commitment`, cancelling an event through `cancel_event`, a reminder through
+`cancel_reminder`; nothing else closes or cancels.
 """
 
 from __future__ import annotations
@@ -14,14 +15,14 @@ from zoneinfo import ZoneInfo
 
 from .db import Database
 from .family import Family
-from .llm import CommitmentOp, EventOp, LlmResult
+from .llm import CommitmentOp, EventOp, LlmResult, ReminderOp
 
 log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class Applied:
-    kind: str  # 'memory' | 'event' | 'commitment'
+    kind: str  # 'memory' | 'event' | 'commitment' | 'reminder'
     op: str
     id: int | None
     ok: bool
@@ -88,6 +89,12 @@ def _commitment_fields(c: CommitmentOp, family: Family, tz: ZoneInfo) -> tuple[d
                 notes.append(f"bad {name} {raw!r} dropped")
             else:
                 fields[name] = value
+    # A specific time and a soft window are two forms of the same thing: the new one wins,
+    # the old one goes, otherwise "moved to next week" keeps showing at the old time.
+    if "due_at" in fields:
+        fields["due_from"] = fields["due_to"] = None
+    elif "due_from" in fields or "due_to" in fields:
+        fields["due_at"] = None
     return fields, notes
 
 
@@ -127,6 +134,25 @@ def _event_fields(e: EventOp, family: Family, tz: ZoneInfo) -> tuple[dict, list[
         if (fields["date_from"] or "") > (fields["date_to"] or ""):
             notes.append(f"date_to {fields['date_to']} before date_from dropped")
             fields["date_to"] = fields["date_from"]
+    return fields, notes
+
+
+def _reminder_fields(r: ReminderOp, family: Family, tz: ZoneInfo) -> tuple[dict, list[str]]:
+    fields: dict[str, str | None] = {}
+    notes: list[str] = []
+    if (text := _text(r.text)) is not None:
+        fields["text"] = text
+    if r.who is not None:
+        who = normalize_member(r.who, family)
+        if who is None:
+            notes.append(f"unknown who {r.who!r} -> null")
+        fields["who"] = who
+    if r.at is not None:
+        at = normalize_datetime(r.at, tz)
+        if at is None:
+            notes.append(f"bad at {r.at!r} dropped")
+        else:
+            fields["at"] = at
     return fields, notes
 
 
@@ -236,6 +262,38 @@ def apply_ops(
             ok = c.id is not None and db.close_commitment(c.id, status)
             note = "" if ok else "not found or not open"
             applied.append(Applied("commitment", f"close:{status}", c.id, ok, note))
+
+    for r in result.reminders:
+        fields, notes = _reminder_fields(r, family, tz)
+        note = "; ".join(notes)
+        if r.op == "create":
+            if "text" not in fields:
+                applied.append(Applied("reminder", "create", None, False, "empty text"))
+                continue
+            if "at" not in fields:
+                applied.append(Applied("reminder", "create", None, False, "no time"))
+                continue
+            rid = db.create_reminder(
+                fields["text"] or "",
+                who=fields.get("who"),
+                at=fields["at"] or "",
+                created_by=author_id,
+                source_message_id=message_id,
+            )
+            applied.append(Applied("reminder", "create", rid, True, note))
+        elif r.op == "update":
+            if r.id is None or not fields:
+                applied.append(Applied("reminder", "update", r.id, False, "nothing to update"))
+                continue
+            ok = db.update_reminder(r.id, **fields)
+            applied.append(
+                Applied("reminder", "update", r.id, ok, note if ok else "not found or not pending")
+            )
+        elif r.op == "cancel":
+            ok = r.id is not None and db.cancel_reminder(r.id)
+            applied.append(
+                Applied("reminder", "cancel", r.id, ok, "" if ok else "not found or not pending")
+            )
 
     for a in applied:
         if not a.ok or a.note:

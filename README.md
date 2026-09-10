@@ -10,8 +10,9 @@ what the system actually stored.
 
 The whole idea in one line: **the LLM understands, the code executes.** One
 structured-output call per message returns what to remember, which events to
-put on the calendar, and which open loops to create, update, or close. Everything else, including the morning
-digest, the "what's today" query, storage, and the web view, is plain
+put on the calendar, which open loops to create, update, or close, and what to
+remind whom when. Everything else, including the morning digest, the reminder
+job, the "what's today" query, storage, and the web view, is plain
 deterministic code. The model remembers nothing between calls.
 
 The original spec (in Ukrainian): [docs/spec-v3.md](docs/spec-v3.md). It is history now;
@@ -62,8 +63,8 @@ MIT.
 
 ## Status
 
-Text and voice in; memories, events and commitments out; Q&A from context; a
-morning digest at 08:30 with today's and tomorrow's events and the day's
-commitments; `.ics` links on the web and «📅» buttons in Telegram that send an
-`.ics` file. Deployed; now in real use. Next: reminders («нагадай за годину до…»),
-then whatever hurts.
+Text and voice in; memories, events, commitments and reminders out; Q&A from
+context; a morning digest at 08:30 with today's and tomorrow's events and the
+day's commitments; reminders («нагадай за годину до…») delivered at the asked
+time; `.ics` links on the web and «📅» buttons in Telegram that send an `.ics`
+file. Deployed; now in real use. Next: whatever hurts.

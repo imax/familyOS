@@ -138,7 +138,12 @@ def pull(
     return dest
 
 
-_OP_KIND = {"memories": "memory", "events": "event", "commitments": "commitment"}
+_OP_KIND = {
+    "memories": "memory",
+    "events": "event",
+    "commitments": "commitment",
+    "reminders": "reminder",
+}
 
 
 def llm_result_lines(raw: str) -> list[str]:
@@ -149,9 +154,10 @@ def llm_result_lines(raw: str) -> list[str]:
     lines: list[str] = []
     usage = d.get("usage") or {}
     if usage:
-        lines.append(
-            f"{d.get('model')}: {usage.get('input_tokens')} in, {usage.get('output_tokens')} out"
-        )
+        line = f"{d.get('model')}: {usage.get('input_tokens')} in, {usage.get('output_tokens')} out"
+        if cached := usage.get("cache_read_input_tokens"):
+            line += f", {cached} from cache"
+        lines.append(line)
     output = d.get("output") or {}
     for key, kind in _OP_KIND.items():
         for op in output.get(key, []):

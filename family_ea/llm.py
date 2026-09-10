@@ -1,7 +1,8 @@
 """The single structured-output call per message. The LLM understands; code executes.
 
-Three kinds of output besides the reply: memories (things to remember), events (things
-that happen at a time or on a day and then pass) and commitments (things to do).
+Four kinds of output besides the reply: memories (things to remember), events (things
+that happen at a time or on a day and then pass), commitments (things to do) and
+reminders (a message to send someone at a given moment).
 """
 
 from __future__ import annotations
@@ -65,11 +66,27 @@ class CommitmentOp(BaseModel):
     )
 
 
+class ReminderOp(BaseModel):
+    op: Literal["create", "update", "cancel"]
+    id: int | None = Field(default=None, description="update/cancel: id існуючого нагадування")
+    text: str | None = Field(
+        default=None, description="create/update: текст нагадування, самодостатній, з часом події"
+    )
+    who: str | None = Field(
+        default=None, description="id людини, кому надіслати, або null — усім у сім'ї"
+    )
+    at: str | None = Field(
+        default=None,
+        description="коли надіслати, ISO 8601 з offset, напр. 2026-09-11T15:00:00+03:00",
+    )
+
+
 class LlmResult(BaseModel):
     reply: str = Field(description="Коротка відповідь людині українською")
     memories: list[MemoryOp] = Field(default_factory=list)
     events: list[EventOp] = Field(default_factory=list)
     commitments: list[CommitmentOp] = Field(default_factory=list)
+    reminders: list[ReminderOp] = Field(default_factory=list)
 
 
 SYSTEM_PROMPT = """\
@@ -81,7 +98,15 @@ SYSTEM_PROMPT = """\
 
 У контексті є «Факти про сім'ю» — стабільний фон, який веде людина сама: хто є хто, адреси, \
 звички, як до кого звертатись. Спирайся на них, але не редагуй: ти їх не повертаєш. Усе, що \
-людина розповідає, — це memories, events і commitments.
+людина розповідає, — це memories, events, commitments і reminders.
+
+Що ти вмієш, і більше нічого: відповідати в цьому чаті; зберігати memories, events, \
+commitments і reminders; щоранку о 08:30 писати кожному дайджест (події на сьогодні й \
+завтра, справи на сьогодні, прострочені, по понеділках ще й без дати); надсилати \
+нагадування в заданий момент; давати кнопку «📅», щоб додати подію в календар телефону. \
+Ти не бачиш, що відбувається (де хто є, кого зустрів), не дзвониш, не пишеш стороннім, не \
+шукаєш в інтернеті. Не обіцяй у reply нічого поза цим списком; якщо просять те, чого не \
+вмієш, скажи, що зробиш натомість.
 
 Що повертати:
 - reply — коротка відповідь людині українською. Без зайвих слів і без переказу того, що вона \
@@ -99,12 +124,24 @@ starts_at (ISO 8601 з offset) і until, якщо кінець відомий; �
 або null, якщо всієї сім'ї. Подія без дати — не подія: це memory або commitment. Минулі \
 події закривати не треба, вони минають самі. «Скасували» → cancel, «перенесли» → update; \
 «перенесли на 11» для події, що вже має день, — це 11:00, а не 11 число.
-- commitments — справи: що комусь треба зробити. owner — id людини, яка це робить, або \
-null, якщо обидва чи неясно. Час: due_at — коли є конкретний дедлайн з часом (ISO 8601 з \
+- commitments — справи: що комусь треба зробити. owner — той, хто це робитиме: коли \
+людина пише про свою справу («подзвонити майстру», «записатись до лікаря»), owner — автор \
+повідомлення; id іншої людини — коли справа явно її; null — лише коли справа явно спільна \
+(«нам треба…») або неясно чия. Час: due_at — коли є конкретний дедлайн з часом (ISO 8601 з \
 offset); due_from / due_to — м'яке вікно в датах. «Завтра» → due_from завтра. «До \
 п'ятниці» → due_to п'ятниця. «Цього або наступного тижня» → due_from сьогодні, due_to \
 неділя наступного тижня. Без згадки часу — без дат. «Стоматолог о 15:30» — це подія; \
 «записати Олю до стоматолога» — справа.
+- reminders — нагадування: людина просить написати їй у певний момент («нагадай за годину \
+до зустрічі», «нагадай завтра о 9 купити квіти»). at — коли надіслати, ISO 8601 з offset; \
+«за годину до» події — її початок мінус година; про подію без «за скільки» — за годину до \
+початку. who — кому: «мені» → автор; «нам», «нам з Анною» чи нагадування про спільну \
+подію → null (усім); про чужу подію без уточнення → той, кого вона стосується. text — сам \
+текст нагадування, коротко і самодостатньо, з часом події: «Зустріч з пані Марією о \
+16:00». Нагадування без моменту часу неможливе: «нагадай, коли побачу Петра» — це \
+commitment, і в reply чесно скажи, що записав як справу і нагадаєш лише в дайджесті. Коли \
+подію переносять чи скасовують, перенеси (update) чи скасуй (cancel) і її нагадування: \
+вони є в контексті з id.
 
 Правила:
 - Одне повідомлення може дати багато операцій (список із 15 пунктів → 15 операцій) або \
@@ -112,8 +149,9 @@ offset); due_from / due_to — м'яке вікно в датах. «Завтр�
 - На питання («хто ремонтував котел?», «що висить по Олі?», «що Анна планувала завтра?») \
 відповідай з контексту в reply, без операцій. Якщо в контексті цього нема — так і скажи.
 - Виправлення («ні, не до п'ятниці, а протягом двох тижнів», «Марію закрий», «забудь про \
-газовика») стосуються існуючих записів: знайди їх за id серед подій, відкритих \
-commitments чи memories і поверни update / cancel / close / delete. Не створюй дублікат.
+газовика») стосуються існуючих записів: знайди їх за id серед подій, нагадувань, \
+відкритих commitments чи memories і поверни update / cancel / close / delete. Не створюй \
+дублікат.
 - Одна подія — один запис. Якщо схожий запис уже є, не дублюй; за потреби update.
 - «Зробила», «попрала», «домовились» про відкритий commitment — це close зі status done, \
 а не нова memory, якщо тільки там нема цінного контексту на майбутнє.
@@ -151,7 +189,16 @@ class Llm:
         response = await self.client.messages.parse(
             model=self.model,
             max_tokens=8192,
-            system=SYSTEM_PROMPT,
+            # The prompt is the only stable prefix (the context starts with the clock), and at
+            # ~2k tokens it clears Sonnet's 1024-token minimum. Messages arrive minutes to
+            # hours apart, so the 1-hour TTL is the one that actually gets hits.
+            system=[
+                {
+                    "type": "text",
+                    "text": SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral", "ttl": "1h"},
+                }
+            ],
             messages=[{"role": "user", "content": context}],
             output_format=LlmResult,
             output_config={"effort": self.effort},
@@ -171,6 +218,7 @@ class Llm:
                 "input_tokens": usage.input_tokens,
                 "output_tokens": usage.output_tokens,
                 "cache_read_input_tokens": usage.cache_read_input_tokens or 0,
+                "cache_creation_input_tokens": usage.cache_creation_input_tokens or 0,
             },
             request_id=response._request_id,
         )

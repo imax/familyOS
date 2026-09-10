@@ -1,8 +1,8 @@
 # Family EA
 
 Private family assistant in Telegram: two adults throw text and voice at the bot, it keeps
-one shared state (memories, events, commitments), answers questions from it and pushes a
-morning digest. Deployed to Fly.io, SQLite on a volume, in real use since 2026-09-10.
+one shared state (memories, events, commitments, reminders), answers questions from it,
+pushes a morning digest and sends reminders at the asked time. Deployed to Fly.io, SQLite on a volume, in real use since 2026-09-10.
 
 `docs/spec-v3.md` is the original spec (Ukrainian). It was retired on 2026-09-10: read it
 for the idea, not for what to build next. What to build next comes from real usage; the
@@ -33,8 +33,8 @@ fly deploy --ha=false                     # deploy; never without --ha=false (se
 family_ea/
   config.py     env -> Settings (.env loaded in dev)
   family.py     Family over the members table (+ ADMIN_USER_ID); slugify() makes ids from names
-  db.py         SQLite schema + all queries; dataclasses Message/Memory/Event/Commitment;
-                backup_to() is the online backup behind GET /backup.db
+  db.py         SQLite schema + all queries; dataclasses Message/Memory/Event/Commitment/
+                Reminder; backup_to() is the online backup behind GET /backup.db
   context.py    deterministic LLM context, event agenda (today/tomorrow/later/recent),
                 commitment buckets (today/overdue/open/later), the digest text, FTS query
   llm.py        pydantic output schema, system prompt, the one messages.parse() call
@@ -43,7 +43,7 @@ family_ea/
   transcribe.py OpenAI gpt-4o-transcribe via httpx
   ical.py       an event or dated commitment -> .ics bytes (timed or all-day)
   bot.py        python-telegram-bot handlers (/start /today /debug /facts /web, text, voice),
-                the 08:30 digest job, «📅» buttons that send an .ics
+                the 08:30 digest job, the per-minute reminder job, «📅» buttons that send an .ics
   web.py        FastAPI + Jinja: GET / (?q=), GET/POST /facts, GET/POST /family, GET /messages,
                 GET /events/:id.ics, GET /commitments/:id.ics, GET /backup.db
   main.py       serve() runs bot + uvicorn in one loop; chat() REPL; pull(); show_log()
@@ -67,10 +67,13 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   `db.close_commitment`, no parallel logic.
 - **Every push is deterministic and stored.** The morning digest renders today's and
   tomorrow's events, then commitments due today and overdue (undated ones only on Mondays),
-  no LLM call, and is silent when empty; it is stored as a bot message so replies to it
-  have context. Anything else the bot sends on its own must follow the same two rules.
-- The bot must not promise what the code cannot do. If a capability is not in the prompt's
-  list of what the bot does, the model must not offer it in a reply.
+  no LLM call, and is silent when empty. A reminder is text the LLM wrote at request time,
+  sent by a per-minute job when `at` comes, to the one member it is for or to everyone.
+  Both are stored as bot messages in each recipient's chat so replies to them have
+  context. Anything else the bot sends on its own must follow the same two rules.
+- The bot must not promise what the code cannot do. The prompt lists what the bot does
+  (digest, reminders, «📅»); when a capability is added or removed, that list changes in
+  the same commit.
 - Keep it small. Two people use this; a feature earns its place by removing a real pain.
 
 ## Production
@@ -96,24 +99,21 @@ tests/          deterministic; the LLM is faked, nothing hits the network
 
 Found on the first day of real use (2026-09-10). Delete when done.
 
-- **Reminders.** «Нагадай нам за годину до зустрічі» must send a Telegram message to the
-  people it concerns at that time. Nothing does yet, and the prompt let the model reply
-  «Нагадаю за годину». Agreed design: own `reminders` table (`text`, `at` UTC, `who` or
-  null = everyone, status, `sent_at`), LLM ops `create`/`cancel`, a per-minute job that
-  sends «⏰ …» to each recipient and stores it as a bot message, pending reminders in the
-  LLM context with ids so moving an event moves its reminder; default offset one hour;
-  late reminders are still sent unless hours late. Web: a section of pending ones.
-- **Bug:** a commitment `update` with a soft window keeps an old `due_at`, and vice versa;
-  the digest and answers then show the stale time. Mirror what `_event_fields` does for
-  events (a timed event clears the all-day dates and back).
-- **Prompt:** list what the bot can do (digest at 08:30, reminders once built, «📅»
-  buttons) and nothing more; `owner` of a first-person task defaults to its author, null
-  only when clearly shared.
-- **Small:** no prompt caching yet (`cache_read_input_tokens` is 0 on every call, ~7k input
-  tokens per message); today's commitments in the digest repeat today's date; member
-  names come from Telegram profiles and may be Latin, renaming is on `/family`.
+- **Verify reminders live** (built 2026-09-10 evening, not yet seen in production): ask
+  for one an hour before an event, check `log` shows a `reminder create` with the right
+  `at` and `who`, and that «⏰ …» arrives to the right people; move the event and check the
+  reminder moved with it. Reminders that fall due while the bot is down are sent late,
+  up to `REMINDER_MAX_LATE`; a deploy takes a minute, so this rarely matters.
+- **Prompt caching** is on for the system prompt only (1-hour TTL). Facts and the family
+  list would cache too if they moved before the clock in the context and the call sent
+  them as a separate cached block; not worth it until a call costs more than a cent.
+- **Small:** today's commitments in the digest repeat today's date; member names come from
+  Telegram profiles and may be Latin, renaming is on `/family`.
 - **Memories are unused so far** (0 rows in production after a day): everything people
   say is a task, an event or a reminder. Watch whether they are needed at all.
+- **Web login:** basic auth is tiring to type on a phone every time. Replace it with a
+  magic link or similar; the natural source of identity is the bot itself (`/web` could
+  send a signed one-time link that sets a long-lived cookie). Not designed yet.
 - Scenario tests through the real model (inputs → expected ops) are still the way to change
   the prompt or compare `claude-haiku-4-5` without regressions; not started.
 

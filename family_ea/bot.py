@@ -1,11 +1,12 @@
-"""Telegram side: allowlist, commands, text and voice handlers, the morning digest job."""
+"""Telegram side: allowlist, commands, text and voice handlers, the digest and reminder jobs."""
 
 from __future__ import annotations
 
 import html
 import json
 import logging
-from datetime import datetime
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 from telegram import (
@@ -27,8 +28,8 @@ from telegram.ext import (
 )
 
 from .config import Settings
-from .context import bucket_commitments, build_agenda, digest_text
-from .db import Commitment, Database, Event, Member
+from .context import bucket_commitments, build_agenda, digest_text, parse_iso
+from .db import Commitment, Database, Event, Member, Reminder
 from .family import Family
 from .ical import commitment_ics, event_ics, ics_filename
 from .pipeline import Pipeline
@@ -39,6 +40,8 @@ log = logging.getLogger(__name__)
 TG_MAX_LEN = 4000
 PRIVATE_BOT = "Це приватний сімейний бот."
 OPEN_ITEMS_WEEKDAY = 0  # Monday: the one morning the digest also lists undated items
+REMINDER_INTERVAL = 60  # seconds between checks for due reminders
+REMINDER_MAX_LATE = timedelta(hours=3)  # due longer ago than this (downtime): missed, not sent
 
 
 def _clip(text: str) -> str:
@@ -57,6 +60,51 @@ def ics_keyboard(items: list[Event | Commitment]) -> InlineKeyboardMarkup | None
             continue
         rows.append([InlineKeyboardButton(f"📅 {item.text[:40]}", callback_data=data)])
     return InlineKeyboardMarkup(rows) if rows else None
+
+
+def reminder_recipients(r: Reminder, family: Family) -> list[Member]:
+    """The one member a reminder is for, or everyone with a Telegram id when `who` is null."""
+    members = [m for m in family.members if m.telegram_id is not None]
+    return [m for m in members if r.who is None or m.id == r.who]
+
+
+async def deliver_due_reminders(
+    db: Database,
+    family: Family,
+    now: datetime,
+    send: Callable[[Member, str], Awaitable[int]],
+) -> list[Reminder]:
+    """Send every pending reminder whose time has come; returns those marked sent.
+
+    `send` delivers a text to a member and returns the Telegram message id. Each delivery
+    is stored as a bot message so a reply to it («перенеси на 17») has context. A reminder
+    counts as sent once at least one recipient got it; if nobody could be reached it stays
+    pending for the next tick, until it is REMINDER_MAX_LATE old and becomes `missed`.
+    """
+    now_iso = now.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    sent: list[Reminder] = []
+    for r in db.due_reminders(now_iso):
+        recipients = reminder_recipients(r, family)
+        if not recipients or parse_iso(r.at) < now - REMINDER_MAX_LATE:
+            db.finish_reminder(r.id, "missed")
+            why = "too late" if recipients else "no recipient"
+            log.warning("reminder %s missed: %s", r.id, why)
+            continue
+        text = f"⏰ {r.text}"
+        delivered = False
+        for member in recipients:
+            try:
+                tg_message_id = await send(member, text)
+            except Exception:
+                log.warning("reminder %s: could not message %s", r.id, member.id, exc_info=True)
+                continue
+            mid = db.insert_message("bot", member.id, text)
+            db.set_tg_message_id(mid, tg_message_id)
+            delivered = True
+        if delivered:
+            db.finish_reminder(r.id, "sent")
+            sent.append(r)
+    return sent
 
 
 def family_filter(family: Family) -> filters.BaseFilter:
@@ -151,6 +199,16 @@ def build_bot(
             # Stored like any bot reply, so the LLM sees what the push said when they answer.
             mid = db.insert_message("bot", member.id, text)
             db.set_tg_message_id(mid, sent.message_id)
+
+    async def send_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Every minute: whatever reminders are due, to whoever they are for."""
+
+        async def send(member: Member, text: str) -> int:
+            assert member.telegram_id is not None
+            sent = await context.bot.send_message(member.telegram_id, text)
+            return sent.message_id
+
+        await deliver_due_reminders(db, family, datetime.now(UTC), send)
 
     async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         person = member_of(update)
@@ -307,5 +365,8 @@ def build_bot(
     assert app.job_queue
     app.job_queue.run_daily(
         send_digest, time=settings.digest_time.replace(tzinfo=settings.tz), name="digest"
+    )
+    app.job_queue.run_repeating(
+        send_reminders, interval=REMINDER_INTERVAL, first=5, name="reminders"
     )
     return app

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .db import Commitment, Database, Event, Member, Memory, Message
+from .db import Commitment, Database, Event, Member, Memory, Message, Reminder
 from .family import Family
 
 MEMORY_WINDOW_DAYS = 60
@@ -198,6 +198,15 @@ def commitment_line(c: Commitment, family: Family, tz: ZoneInfo, with_id: bool =
     return "".join(parts)
 
 
+# --- reminders ----------------------------------------------------------------
+
+
+def reminder_line(r: Reminder, family: Family, tz: ZoneInfo) -> str:
+    """'[нагадування #2] 11.09 15:00 Зустріч з пані Марією о 16:00 (Анна)'; '(усім)' for all."""
+    to = family.display_name(r.who) if r.who else "усім"
+    return f"[нагадування #{r.id}] {fmt_dt(r.at, tz)} {r.text} ({to})"
+
+
 # --- digest -------------------------------------------------------------------
 
 
@@ -336,6 +345,10 @@ def build_context(db: Database, family: Family, now: datetime, author: Member, t
         section(
             f"Події (минулі за {PAST_EVENT_DAYS} днів і всі майбутні)",
             [f"- {event_line(e, family, tz)}" for e in agenda.recent + agenda.upcoming],
+        ),
+        section(
+            "Нагадування (заплановані, ще не надіслані)",
+            [f"- {reminder_line(r, family, tz)}" for r in db.pending_reminders()],
         ),
         section(
             "Відкриті commitments (справи, усі)",

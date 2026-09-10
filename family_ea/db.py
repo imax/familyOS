@@ -1,9 +1,10 @@
-"""SQLite storage: members, messages, memories, events, commitments, facts.
+"""SQLite storage: members, messages, memories, events, commitments, reminders, facts.
 
 One connection, one process, one writer. Original messages are never mutated;
-memories are soft-deleted; commitments are closed and events are cancelled, never
-removed (a past event simply passes); facts (the human-maintained standing context)
-keep every version; members (who talks to the bot) are edited by the admin on the web.
+memories are soft-deleted; commitments are closed, events are cancelled and reminders
+are sent, missed or cancelled, never removed (a past event simply passes); facts (the
+human-maintained standing context) keep every version; members (who talks to the bot) are
+edited by the admin on the web.
 """
 
 from __future__ import annotations
@@ -61,6 +62,18 @@ CREATE TABLE IF NOT EXISTS events (
   created_at TEXT NOT NULL,
   source_message_id INTEGER NOT NULL,
   cancelled_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS reminders (
+  id INTEGER PRIMARY KEY,
+  text TEXT NOT NULL,               -- what to send, self-contained
+  who TEXT,                         -- family member id; NULL = everyone
+  at TEXT NOT NULL,                 -- ISO UTC datetime: when to send
+  status TEXT NOT NULL,             -- 'pending' | 'sent' | 'missed' | 'cancelled'
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  source_message_id INTEGER NOT NULL,
+  sent_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS facts (
@@ -168,6 +181,23 @@ class Event:
 
 
 @dataclass(frozen=True)
+class Reminder:
+    id: int
+    text: str
+    who: str | None
+    at: str
+    status: str
+    created_by: str
+    created_at: str
+    source_message_id: int
+    sent_at: str | None
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status == "pending"
+
+
+@dataclass(frozen=True)
 class Facts:
     id: int
     text: str
@@ -200,8 +230,13 @@ def _event(row: sqlite3.Row) -> Event:
     return Event(**dict(row))
 
 
+def _reminder(row: sqlite3.Row) -> Reminder:
+    return Reminder(**dict(row))
+
+
 COMMITMENT_UPDATABLE = ("text", "owner", "due_at", "due_from", "due_to")
 EVENT_UPDATABLE = ("text", "who", "starts_at", "until", "date_from", "date_to")
+REMINDER_UPDATABLE = ("text", "who", "at")
 
 
 class Database:
@@ -549,3 +584,72 @@ class Database:
             (f"%{q.casefold()}%", limit),
         ).fetchall()
         return [_commitment(r) for r in rows]
+
+    # --- reminders ------------------------------------------------------------
+
+    def create_reminder(
+        self,
+        text: str,
+        *,
+        who: str | None,
+        at: str,
+        created_by: str,
+        source_message_id: int,
+    ) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO reminders (text, who, at, status, created_by, created_at,"
+            " source_message_id) VALUES (?, ?, ?, 'pending', ?, ?, ?)",
+            (text, who, at, created_by, utc_now_iso(), source_message_id),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def update_reminder(self, reminder_id: int, **fields: str | None) -> bool:
+        """Update text/who/at of a pending reminder. Returns False if not pending."""
+        fields = {k: v for k, v in fields.items() if k in REMINDER_UPDATABLE}
+        if not fields:
+            return False
+        assignments = ", ".join(f"{k} = ?" for k in fields)
+        cur = self.conn.execute(
+            f"UPDATE reminders SET {assignments} WHERE id = ? AND status = 'pending'",
+            (*fields.values(), reminder_id),
+        )
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def cancel_reminder(self, reminder_id: int) -> bool:
+        cur = self.conn.execute(
+            "UPDATE reminders SET status = 'cancelled' WHERE id = ? AND status = 'pending'",
+            (reminder_id,),
+        )
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def finish_reminder(self, reminder_id: int, status: str) -> bool:
+        """'sent', or 'missed' when it came due while the bot was down. False if not pending."""
+        if status not in ("sent", "missed"):
+            raise ValueError(f"bad status: {status}")
+        cur = self.conn.execute(
+            "UPDATE reminders SET status = ?, sent_at = ? WHERE id = ? AND status = 'pending'",
+            (status, utc_now_iso() if status == "sent" else None, reminder_id),
+        )
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def get_reminder(self, reminder_id: int) -> Reminder | None:
+        row = self.conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+        return _reminder(row) if row else None
+
+    def pending_reminders(self) -> list[Reminder]:
+        rows = self.conn.execute(
+            "SELECT * FROM reminders WHERE status = 'pending' ORDER BY at, id"
+        ).fetchall()
+        return [_reminder(r) for r in rows]
+
+    def due_reminders(self, now_iso: str) -> list[Reminder]:
+        """Pending reminders whose time has come: `at` <= now, both ISO UTC."""
+        rows = self.conn.execute(
+            "SELECT * FROM reminders WHERE status = 'pending' AND at <= ? ORDER BY at, id",
+            (now_iso,),
+        ).fetchall()
+        return [_reminder(r) for r in rows]

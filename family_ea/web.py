@@ -88,6 +88,7 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
             {
                 "q": "",
                 "agenda": build_agenda(db.planned_events(), now),
+                "reminders": db.pending_reminders(),
                 "buckets": bucket_commitments(db.open_commitments(), now),
                 "memories": db.list_memories(limit=200),
             },

@@ -96,6 +96,9 @@ def test_llm_result_lines() -> None:
         "[ok] commitment create #1",
     ]
     assert llm_result_lines('{"error": "boom"}') == ["error: boom"]
+    cached = '{"model": "m", "usage": {"input_tokens": 5, "output_tokens": 1,'
+    cached += ' "cache_read_input_tokens": 2000}}'
+    assert llm_result_lines(cached) == ["m: 5 in, 1 out, 2000 from cache"]
 
 
 def test_show_log_prints_messages_with_ops(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:

@@ -108,3 +108,30 @@ def test_apply_ops_validates_and_updates(db: Database, family: Family) -> None:
     ]
     c = db.get_commitment(c.id)
     assert c and c.due_at == "2026-09-10T12:30:00Z" and c.owner == "oleh" and c.status == "done"
+
+
+def test_commitment_window_replaces_time_and_back(db: Database, family: Family) -> None:
+    """«Сніданок завтра о 10» then «перенесли на наступний тиждень»: the 10:00 must go."""
+    mid = db.insert_message("oleh", "oleh", "...")
+
+    def apply(ops: list[dict]) -> None:
+        r = LlmResult.model_validate({"reply": "", "commitments": ops})
+        applied = apply_ops(db, r, author_id="oleh", message_id=mid, family=family, tz=KYIV)
+        assert all(a.ok for a in applied), applied
+
+    apply([{"op": "create", "text": "Сніданок", "due_at": "2026-09-11T10:00:00+03:00"}])
+    apply([{"op": "update", "id": 1, "due_from": "2026-09-14", "due_to": "2026-09-20"}])
+    c = db.get_commitment(1)
+    assert c and (c.due_at, c.due_from, c.due_to) == (None, "2026-09-14", "2026-09-20")
+
+    apply([{"op": "update", "id": 1, "due_at": "2026-09-16T10:00:00+03:00"}])
+    c = db.get_commitment(1)
+    assert c and (c.due_at, c.due_from, c.due_to) == ("2026-09-16T07:00:00Z", None, None)
+
+    apply([{"op": "update", "id": 1, "due_to": "2026-09-19"}])  # «до суботи»: a window again
+    c = db.get_commitment(1)
+    assert c and (c.due_at, c.due_from, c.due_to) == (None, None, "2026-09-19")
+
+    apply([{"op": "update", "id": 1, "text": "Сніданок з командою"}])  # text only: dates untouched
+    c = db.get_commitment(1)
+    assert c and (c.due_at, c.due_from, c.due_to) == (None, None, "2026-09-19")
