@@ -122,6 +122,11 @@ class Commitment:
     def is_open(self) -> bool:
         return self.status == "open"
 
+    @property
+    def has_due(self) -> bool:
+        """Dated in any way: a specific time or a soft window. Only these go to a calendar."""
+        return bool(self.due_at or self.due_from or self.due_to)
+
 
 @dataclass(frozen=True)
 class Facts:

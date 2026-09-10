@@ -1,4 +1,5 @@
 from base64 import b64encode
+from datetime import time
 
 from fastapi.testclient import TestClient
 
@@ -21,6 +22,7 @@ def _settings(**kw) -> Settings:
         web_url=None,
         llm_model="m",
         llm_effort="medium",
+        digest_time=time(8, 30),
         port=8080,
         tz=KYIV,
     )
@@ -94,3 +96,43 @@ def test_family_web_add_and_edit(db: Database, family: Family) -> None:
     page = client.get("/family", params={"error": "Тест"}, headers=_auth())
     assert 'class="error">Тест' in page.text
     assert client.post("/family", data={"name": "x"}).status_code == 401
+
+
+def test_web_done_drop_and_ics(db: Database, family: Family) -> None:
+    mid = db.insert_message("anna", "anna", "...")
+    timed = db.create_commitment(
+        "Стоматолог",
+        owner="anna",
+        created_by="anna",
+        source_message_id=mid,
+        due_at="2026-09-10T12:30:00Z",
+    )
+    undated = db.create_commitment("Без дати", owner=None, created_by="anna", source_message_id=mid)
+    client = TestClient(build_web(_settings(), family, db))
+
+    home = client.get("/", headers=_auth())
+    assert f'href="/commitments/{timed}.ics"' in home.text
+    assert f'href="/commitments/{undated}.ics"' not in home.text
+    assert f'action="/commitments/{timed}/done"' in home.text
+
+    ics = client.get(f"/commitments/{timed}.ics", headers=_auth())
+    assert ics.status_code == 200 and ics.headers["content-type"].startswith("text/calendar")
+    assert "DTSTART:20260910T123000Z" in ics.text
+    assert 'filename="stomatoloh.ics"' in ics.headers["content-disposition"]
+    assert client.get(f"/commitments/{undated}.ics", headers=_auth()).status_code == 404
+
+    def post(path: str):
+        return client.post(path, headers=_auth(), follow_redirects=False)
+
+    r = post(f"/commitments/{timed}/done")
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    assert db.get_commitment(timed).status == "done"
+    assert post(f"/commitments/{timed}/done").status_code == 404  # already closed
+    assert post(f"/commitments/{undated}/drop").status_code == 303
+    assert db.get_commitment(undated).status == "dropped"
+    assert post(f"/commitments/{undated}/bogus").status_code == 404
+    assert post("/commitments/999/done").status_code == 404
+    assert client.post(f"/commitments/{timed}/done").status_code == 401
+
+    search = client.get("/", params={"q": "стомат"}, headers=_auth())
+    assert "status-done" in search.text and '/done"' not in search.text  # closed: no buttons

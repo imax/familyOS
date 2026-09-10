@@ -119,21 +119,53 @@ def commitment_line(c: Commitment, family: Family, tz: ZoneInfo, with_id: bool =
     return "".join(parts)
 
 
-def render_digest(b: Buckets, family: Family, tz: ZoneInfo, max_open: int = 5) -> str:
-    """The today / overdue / open block. Used in the LLM context and the morning push."""
-    lines = []
+def _digest_lines(
+    b: Buckets,
+    family: Family,
+    tz: ZoneInfo,
+    *,
+    with_ids: bool,
+    include_open: bool,
+    max_open: int,
+) -> list[str]:
+    def line(c: Commitment) -> str:
+        return f"- {commitment_line(c, family, tz, with_id=with_ids)}"
+
+    lines: list[str] = []
     if b.today:
         lines.append("Сьогодні:")
-        lines += [f"- {commitment_line(c, family, tz)}" for c in b.today]
+        lines += [line(c) for c in b.today]
     if b.overdue:
         lines.append("Прострочено:")
-        lines += [f"- {commitment_line(c, family, tz)}" for c in b.overdue]
-    if b.open:
+        lines += [line(c) for c in b.overdue]
+    if include_open and b.open:
         lines.append("Без дати:")
-        lines += [f"- {commitment_line(c, family, tz)}" for c in b.open[:max_open]]
+        lines += [line(c) for c in b.open[:max_open]]
         if len(b.open) > max_open:
             lines.append(f"- і ще {len(b.open) - max_open}")
+    return lines
+
+
+def render_digest(b: Buckets, family: Family, tz: ZoneInfo, max_open: int = 5) -> str:
+    """The today / overdue / open block with ids, for the LLM context."""
+    lines = _digest_lines(b, family, tz, with_ids=True, include_open=True, max_open=max_open)
     return "\n".join(lines) if lines else "нічого"
+
+
+def digest_text(
+    b: Buckets, family: Family, tz: ZoneInfo, *, include_open: bool, max_open: int = 5
+) -> str | None:
+    """The morning push: today and overdue, plus undated items when `include_open`.
+
+    None when there is nothing to say (spec scenario H: an empty morning stays silent).
+    Deterministic on purpose: this is presentation, not understanding.
+    """
+    lines = _digest_lines(
+        b, family, tz, with_ids=False, include_open=include_open, max_open=max_open
+    )
+    if not lines:
+        return None
+    return "\n".join(lines) + "\n\nНічого не забули?"
 
 
 # --- FTS ----------------------------------------------------------------------

@@ -27,8 +27,11 @@ family_ea/
   ops.py        apply LLM ops to db, with validation and an `applied` log
   pipeline.py   store -> context -> LLM -> ops -> reply
   transcribe.py OpenAI gpt-4o-transcribe via httpx
-  bot.py        python-telegram-bot handlers (/start /debug /web, text, voice)
-  web.py        FastAPI + Jinja: GET / (?q=), GET/POST /facts, GET/POST /family, GET /messages
+  ical.py       one commitment -> .ics bytes (timed: one hour; window: all-day)
+  bot.py        python-telegram-bot handlers (/start /today /debug /facts /web, text, voice),
+                the 08:30 digest job, «📅» buttons that send an .ics
+  web.py        FastAPI + Jinja: GET / (?q=), GET/POST /facts, GET/POST /family, GET /messages,
+                POST /commitments/:id/done|drop, GET /commitments/:id.ics
   main.py       serve() runs bot + uvicorn in one loop; chat() is a local REPL
 tests/          deterministic; the LLM is faked, nothing hits the network
 ```
@@ -42,6 +45,8 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   belongs to) so bot replies can be attributed in context; and `messages.llm_result` holds
   `{model, usage, output, applied}` rather than the bare LLM output.
 - **Web `done`/`drop` reuse the same code path as the LLM `close` op.** No parallel logic.
+- **The morning digest is deterministic.** Code renders today/overdue (undated items only on
+  Mondays), no LLM call; the push is stored as a bot message so replies to it have context.
 - Keep it small. If a feature isn't testing the spec's hypothesis, it's not in MVP
   (spec section 10 lists what we deliberately don't build).
 

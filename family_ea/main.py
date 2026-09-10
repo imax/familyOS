@@ -49,11 +49,13 @@ async def serve(settings: Settings) -> None:
     )
 
     log.info(
-        "starting: model=%s db=%s members=%s voice=%s",
+        "starting: model=%s db=%s members=%s voice=%s digest=%s %s",
         settings.llm_model,
         settings.database_path,
         [p.id for p in family.members],
         "on" if transcriber else "off",
+        settings.digest_time.strftime("%H:%M"),
+        settings.tz.key,
     )
     async with tg_app:
         await tg_app.start()

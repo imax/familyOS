@@ -1,6 +1,7 @@
 """Web view: what the system actually stored. Server-rendered, basic auth.
 
-Read-only except `/facts` and `/family`, the two things a human edits by hand.
+Read-only except `/facts` and `/family` (the two things a human edits by hand) and
+done/drop on commitments, which go through the same `close_commitment` as the LLM's op.
 """
 
 import json
@@ -12,7 +13,7 @@ from typing import Annotated
 from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
@@ -20,6 +21,7 @@ from .config import Settings
 from .context import bucket_commitments, fmt_date, fmt_dt, fmt_due, fts_query
 from .db import Database
 from .family import Family
+from .ical import commitment_ics, ics_filename
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +75,28 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
             request,
             "index.html",
             {"q": "", "buckets": buckets, "memories": db.list_memories(limit=200)},
+        )
+
+    @app.post("/commitments/{cid:int}/{action}", dependencies=[Depends(authed)])
+    async def commitment_close(cid: int, action: str) -> RedirectResponse:
+        """done / drop buttons. Same code path as the LLM's close op."""
+        status = {"done": "done", "drop": "dropped"}.get(action)
+        if status is None:
+            raise HTTPException(status_code=404, detail="unknown action")
+        if not db.close_commitment(cid, status):
+            raise HTTPException(status_code=404, detail="not found or not open")
+        return RedirectResponse("/", status_code=303)
+
+    @app.get("/commitments/{cid:int}.ics", dependencies=[Depends(authed)])
+    async def commitment_ics_file(cid: int) -> Response:
+        """One dated commitment as an .ics file: open it and the calendar offers to add it."""
+        c = db.get_commitment(cid)
+        if c is None or not c.has_due:
+            raise HTTPException(status_code=404, detail="no such dated commitment")
+        return Response(
+            commitment_ics(c),
+            media_type="text/calendar; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{ics_filename(c)}"'},
         )
 
     @app.get("/facts", response_class=HTMLResponse, dependencies=[Depends(authed)])

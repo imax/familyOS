@@ -5,6 +5,7 @@ import pytest
 from family_ea.context import (
     bucket_commitments,
     build_context,
+    digest_text,
     fmt_due,
     fts_query,
     render_digest,
@@ -72,6 +73,29 @@ def test_render_digest_caps_open_list(family: Family) -> None:
     text = render_digest(b, family, KYIV, max_open=5)
     assert "і ще 3" in text
     assert "Сьогодні" not in text
+
+
+def test_digest_text(family: Family) -> None:
+    now = datetime(2026, 9, 10, 8, 30, tzinfo=KYIV)
+    items = [
+        _c(1, text="Стоматолог", owner="anna", due_at="2026-09-10T12:30:00Z"),
+        _c(2, text="Поговорити з Марією", due_to="2026-09-09"),
+        _c(3, text="Купити лампочки"),
+    ]
+    b = bucket_commitments(items, now)
+    assert digest_text(b, family, KYIV, include_open=False) == (
+        "Сьогодні:\n- Стоматолог (Анна, 10.09 15:30)\n"
+        "Прострочено:\n- Поговорити з Марією (09.09)\n\n"
+        "Нічого не забули?"
+    )
+    with_open = digest_text(b, family, KYIV, include_open=True)
+    assert with_open and "Без дати:\n- Купити лампочки" in with_open
+    assert "[#" not in with_open  # the push has no ids
+
+    only_undated = bucket_commitments([_c(3)], now)
+    assert digest_text(only_undated, family, KYIV, include_open=False) is None
+    assert digest_text(only_undated, family, KYIV, include_open=True)
+    assert digest_text(bucket_commitments([], now), family, KYIV, include_open=True) is None
 
 
 def test_build_context_sections(

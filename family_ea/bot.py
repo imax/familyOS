@@ -1,16 +1,25 @@
-"""Telegram side: allowlist, commands, text and voice handlers."""
+"""Telegram side: allowlist, commands, text and voice handlers, the morning digest job."""
 
 from __future__ import annotations
 
 import html
 import json
 import logging
+from datetime import datetime
 from urllib.parse import urlencode
 
-from telegram import BotCommand, Message, Update
+from telegram import (
+    BotCommand,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputFile,
+    Message,
+    Update,
+)
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -18,8 +27,10 @@ from telegram.ext import (
 )
 
 from .config import Settings
-from .db import Database, Member
+from .context import bucket_commitments, digest_text
+from .db import Commitment, Database, Member
 from .family import Family
+from .ical import commitment_ics, ics_filename
 from .pipeline import Pipeline
 from .transcribe import Transcriber
 
@@ -27,10 +38,21 @@ log = logging.getLogger(__name__)
 
 TG_MAX_LEN = 4000
 PRIVATE_BOT = "Це приватний сімейний бот."
+OPEN_ITEMS_WEEKDAY = 0  # Monday: the one morning the digest also lists undated items
 
 
 def _clip(text: str) -> str:
     return text if len(text) <= TG_MAX_LEN else text[: TG_MAX_LEN - 1] + "…"
+
+
+def ics_keyboard(items: list[Commitment]) -> InlineKeyboardMarkup | None:
+    """One «📅 …» button per dated item; tapping it sends that item as an .ics file."""
+    rows = [
+        [InlineKeyboardButton(f"📅 {c.text[:40]}", callback_data=f"ics:{c.id}")]
+        for c in items
+        if c.has_due
+    ]
+    return InlineKeyboardMarkup(rows) if rows else None
 
 
 def family_filter(family: Family) -> filters.BaseFilter:
@@ -76,8 +98,75 @@ def build_bot(
         outcome = await pipeline.handle(
             person, text, is_voice=is_voice, tg_message_id=update.message.message_id
         )
-        sent = await update.message.reply_text(_clip(outcome.reply))
+        touched = [
+            c
+            for a in outcome.applied
+            if a.kind == "commitment" and a.ok and a.id and a.op in ("create", "update")
+            if (c := db.get_commitment(a.id)) is not None
+        ]
+        sent = await update.message.reply_text(
+            _clip(outcome.reply), reply_markup=ics_keyboard(touched)
+        )
         db.set_tg_message_id(outcome.bot_message_id, sent.message_id)
+
+    def digest(
+        now: datetime, *, include_open: bool
+    ) -> tuple[str, InlineKeyboardMarkup | None] | None:
+        buckets = bucket_commitments(db.open_commitments(), now)
+        text = digest_text(buckets, family, settings.tz, include_open=include_open)
+        if text is None:
+            return None
+        return _clip(text), ics_keyboard(buckets.today + buckets.overdue)
+
+    async def send_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
+        """The morning job: one shared digest to every member; silence when it is empty."""
+        now = datetime.now(settings.tz)
+        result = digest(now, include_open=now.weekday() == OPEN_ITEMS_WEEKDAY)
+        if result is None:
+            log.info("digest: nothing to say today")
+            return
+        text, keyboard = result
+        for member in family.members:
+            if member.telegram_id is None:
+                continue
+            try:
+                sent = await context.bot.send_message(
+                    member.telegram_id, text, reply_markup=keyboard
+                )
+            except Exception:
+                log.warning("digest: could not message %s", member.id, exc_info=True)
+                continue
+            # Stored like any bot reply, so the LLM sees what the push said when they answer.
+            mid = db.insert_message("bot", member.id, text)
+            db.set_tg_message_id(mid, sent.message_id)
+
+    async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        person = member_of(update)
+        assert update.message and person
+        result = digest(datetime.now(settings.tz), include_open=True)
+        if result is None:
+            await update.message.reply_text("Нічого не висить.")
+            return
+        text, keyboard = result
+        sent = await update.message.reply_text(text, reply_markup=keyboard)
+        mid = db.insert_message("bot", person.id, text)
+        db.set_tg_message_id(mid, sent.message_id)
+
+    async def on_ics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """«📅» button: send the commitment as an .ics file to open in the phone calendar."""
+        q = update.callback_query
+        assert q and q.data
+        if family.by_telegram_id(q.from_user.id) is None:
+            await q.answer(PRIVATE_BOT)
+            return
+        c = db.get_commitment(int(q.data.split(":", 1)[1]))
+        if c is None or not c.has_due:
+            await q.answer("Нема такої справи з датою.")
+            return
+        await q.answer()
+        await context.bot.send_document(
+            q.from_user.id, InputFile(commitment_ics(c), filename=ics_filename(c)), caption=c.text
+        )
 
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         person = member_of(update)
@@ -175,6 +264,7 @@ def build_bot(
         await app.bot.set_my_commands(
             [
                 BotCommand("start", "привітання"),
+                BotCommand("today", "що сьогодні, що прострочено, що висить"),
                 BotCommand("debug", "що LLM повернув на останнє повідомлення"),
                 BotCommand("facts", "факти про сім'ю, які бачить асистент"),
                 BotCommand("web", "лінк на web view"),
@@ -184,10 +274,16 @@ def build_bot(
     app = Application.builder().token(settings.telegram_token).post_init(post_init).build()
     allowed = family_filter(family)
     app.add_handler(CommandHandler("start", start, filters=allowed))
+    app.add_handler(CommandHandler("today", today, filters=allowed))
     app.add_handler(CommandHandler("debug", debug, filters=allowed))
     app.add_handler(CommandHandler("facts", facts, filters=allowed))
     app.add_handler(CommandHandler("web", web, filters=allowed))
     app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(MessageHandler(allowed & filters.VOICE, on_voice))
     app.add_handler(MessageHandler(~allowed, stranger))
+    app.add_handler(CallbackQueryHandler(on_ics, pattern=r"^ics:\d+$"))
+    assert app.job_queue
+    app.job_queue.run_daily(
+        send_digest, time=settings.digest_time.replace(tzinfo=settings.tz), name="digest"
+    )
     return app

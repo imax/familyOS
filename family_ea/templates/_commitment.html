@@ -1,5 +1,12 @@
 <li class="{{ 'overdue' if overdue else '' }} status-{{ c.status }}">
   <span class="id">#{{ c.id }}</span>{{ c.text }}
+  {% if c.has_due %}<a class="ical" href="/commitments/{{ c.id }}.ics" title="в календар (.ics)">📅</a>{% endif %}
+  {% if c.status == 'open' %}
+  <span class="actions">
+    <form method="post" action="/commitments/{{ c.id }}/done"><button type="submit" title="зроблено">done</button></form>
+    <form method="post" action="/commitments/{{ c.id }}/drop"><button type="submit" title="більше не актуально">drop</button></form>
+  </span>
+  {% endif %}
   <div class="meta">
     {% if c.owner %}{{ c.owner | person }} · {% endif %}
     {% if c | due %}{{ c | due }} · {% endif %}

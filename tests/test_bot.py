@@ -2,9 +2,10 @@ from datetime import UTC, datetime
 
 from telegram import Chat, Message, Update, User
 
-from family_ea.bot import build_bot, family_filter
+from family_ea.bot import build_bot, family_filter, ics_keyboard
 from family_ea.db import Database
 from family_ea.family import Family
+from tests.test_context import _c
 from tests.test_web import _settings
 
 
@@ -27,6 +28,14 @@ def test_family_filter_is_live(db: Database) -> None:
     assert allowed.check_update(_update(3))
 
 
-def test_build_bot_registers_handlers(db: Database, family: Family) -> None:
+def test_build_bot_registers_handlers_and_digest_job(db: Database, family: Family) -> None:
     app = build_bot(_settings(telegram_token="123:abc"), family, db, None, None)  # type: ignore[arg-type]
-    assert len(app.handlers[0]) == 7
+    assert len(app.handlers[0]) == 9
+    assert app.job_queue and [j.name for j in app.job_queue.jobs()] == ["digest"]
+
+
+def test_ics_keyboard_only_for_dated_items() -> None:
+    kb = ics_keyboard([_c(1, text="Стоматолог", due_at="2026-09-10T12:30:00Z"), _c(2)])
+    assert kb and [b.callback_data for row in kb.inline_keyboard for b in row] == ["ics:1"]
+    assert kb.inline_keyboard[0][0].text == "📅 Стоматолог"
+    assert ics_keyboard([_c(2)]) is None

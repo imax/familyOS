@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -24,6 +25,7 @@ class Settings:
     web_url: str | None
     llm_model: str
     llm_effort: str
+    digest_time: time  # local time of the morning push, in `tz`
     port: int
     tz: ZoneInfo
 
@@ -50,6 +52,14 @@ def _env_int(name: str) -> int | None:
     return int(raw)
 
 
+def _env_time(name: str, default: str) -> time:
+    raw = _env(name, default) or default
+    try:
+        return time.fromisoformat(raw)
+    except ValueError:
+        raise SystemExit(f"{name} must be HH:MM, got {raw!r}") from None
+
+
 def load_settings() -> Settings:
     return Settings(
         telegram_token=_env("TELEGRAM_BOT_TOKEN"),
@@ -62,6 +72,7 @@ def load_settings() -> Settings:
         web_url=_env("WEB_URL"),
         llm_model=_env("LLM_MODEL", "claude-sonnet-5") or "",
         llm_effort=_env("LLM_EFFORT", "medium") or "",
+        digest_time=_env_time("DIGEST_TIME", "08:30"),
         port=int(_env("PORT", "8080") or 8080),
         tz=ZoneInfo(_env("TZ", "Europe/Kyiv") or "Europe/Kyiv"),
     )
