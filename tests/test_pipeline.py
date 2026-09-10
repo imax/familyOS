@@ -28,7 +28,7 @@ async def test_pipeline_happy_path(db: Database, family: Family, oleh: Member) -
     outcome = await Pipeline(db, family, llm, KYIV).handle(
         oleh, "Приходив газовик Петро", is_voice=True, tg_message_id=10
     )
-    assert outcome.reply == "🎙 «Приходив газовик Петро»\n\nЗаписав."
+    assert outcome.reply == "Записав."  # the transcript is not echoed back
     assert outcome.error is None and [a.ok for a in outcome.applied] == [True]
     assert "Нове повідомлення" in llm.contexts[0]
 
@@ -41,7 +41,7 @@ async def test_pipeline_happy_path(db: Database, family: Family, oleh: Member) -
 
     bot_msg = db.get_message(outcome.bot_message_id)
     assert bot_msg and bot_msg.user_id == "bot" and bot_msg.chat_with == "oleh"
-    assert bot_msg.raw_text == "Записав."  # transcript is not duplicated into the bot row
+    assert bot_msg.raw_text == "Записав."
     assert [m.text for m in db.list_memories()] == ["Газовик Петро"]
 
 

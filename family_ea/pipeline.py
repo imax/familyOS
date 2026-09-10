@@ -23,7 +23,7 @@ ERROR_REPLY = "Щось пішло не так, спробуй ще раз."
 class Outcome:
     message_id: int
     bot_message_id: int
-    reply: str  # what to send, including the voice transcript line
+    reply: str  # what to send; a voice transcript is not echoed (it is on /messages and /debug)
     result: LlmResult | None
     applied: list[Applied]
     error: str | None = None
@@ -82,6 +82,4 @@ class Pipeline:
 
         reply = call.result.reply.strip() or "Ок."
         bot_message_id = self.db.insert_message("bot", author.id, reply)
-        if is_voice:
-            reply = f"🎙 «{text.strip()}»\n\n{reply}"
         return Outcome(message_id, bot_message_id, reply, call.result, applied)
