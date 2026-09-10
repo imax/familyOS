@@ -15,8 +15,10 @@ remind whom when. Everything else, including the morning digest, the reminder
 job, the "what's today" query, storage, and the web view, is plain
 deterministic code. The model remembers nothing between calls.
 
-The original spec (in Ukrainian): [docs/spec-v3.md](docs/spec-v3.md). It is history now;
-what gets built next comes from real use.
+## Status
+
+Deployed; now in real use. What it does today, the backlog and the dated
+changes: [docs/status.md](docs/status.md) (Ukrainian).
 
 ## Stack
 
@@ -62,12 +64,3 @@ short-lived bearer token with the same `WEB_SECRET` (put it in `.env`) and downl
 ## License
 
 MIT.
-
-## Status
-
-Text and voice in; memories, events, commitments and reminders out; Q&A from
-context; a morning digest at 08:30 with today's and tomorrow's events and the
-day's commitments; reminders («нагадай за годину до…») delivered at the asked
-time; `.ics` links on the web and «📅» buttons in Telegram that send an `.ics`
-file. Deployed; now in real use. What it does today, the backlog and the dated
-changes: [docs/status.md](docs/status.md) (Ukrainian).
