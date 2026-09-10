@@ -1,4 +1,3 @@
-from base64 import b64encode
 from datetime import datetime
 
 from fastapi.testclient import TestClient
@@ -8,11 +7,7 @@ from family_ea.db import Database, Member
 from family_ea.family import Family
 from family_ea.web import build_web
 from tests.conftest import KYIV
-from tests.test_web import _settings
-
-
-def _auth() -> dict[str, str]:
-    return {"Authorization": "Basic " + b64encode(b"u:p").decode()}
+from tests.test_web import _auth, _settings
 
 
 def test_facts_versions(db: Database) -> None:

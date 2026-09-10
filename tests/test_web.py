@@ -1,9 +1,9 @@
-from base64 import b64encode
-from datetime import datetime, time
+from datetime import UTC, datetime, time
 
 import pytest
 from fastapi.testclient import TestClient
 
+from family_ea.auth import LINK_TTL, SESSION_TTL, sign
 from family_ea.config import Settings
 from family_ea.db import Database, Member
 from family_ea.family import Family
@@ -18,8 +18,7 @@ def _settings(**kw) -> Settings:
         openai_api_key=None,
         database_path=":memory:",
         admin_user_id=1,
-        web_user="u",
-        web_password="p",
+        web_secret="s",
         web_url=None,
         llm_model="m",
         llm_effort="medium",
@@ -31,8 +30,9 @@ def _settings(**kw) -> Settings:
     return Settings(**base)
 
 
-def _auth(user: str = "u", password: str = "p") -> dict[str, str]:
-    return {"Authorization": "Basic " + b64encode(f"{user}:{password}".encode()).decode()}
+def _auth(member: str = "oleh") -> dict[str, str]:
+    """A request header carrying a valid session cookie for `member`."""
+    return {"Cookie": f"session={sign('s', 'session', member, SESSION_TTL)}"}
 
 
 def freeze_web_clock(monkeypatch: pytest.MonkeyPatch, now: datetime) -> None:
@@ -62,7 +62,7 @@ def test_web_pages(db: Database, family: Family) -> None:
 
     assert client.get("/healthz").json() == {"ok": True}
     assert client.get("/").status_code == 401
-    assert client.get("/", headers=_auth("u", "wrong")).status_code == 401
+    assert client.get("/", headers={"Cookie": "session=garbage"}).status_code == 401
 
     home = client.get("/", headers=_auth())
     assert home.status_code == 200
@@ -79,7 +79,7 @@ def test_web_pages(db: Database, family: Family) -> None:
 
 
 def test_web_refuses_without_configured_auth(db: Database, family: Family) -> None:
-    client = TestClient(build_web(_settings(web_user=None, web_password=None), family, db))
+    client = TestClient(build_web(_settings(web_secret=None), family, db))
     assert client.get("/", headers=_auth()).status_code == 503
 
 
@@ -134,3 +134,47 @@ def test_web_ics(db: Database, family: Family) -> None:
     assert client.get(f"/commitments/{undated}.ics", headers=_auth()).status_code == 404
     assert client.get("/commitments/999.ics", headers=_auth()).status_code == 404
     assert client.get(f"/commitments/{timed}.ics").status_code == 401
+
+
+def test_login_from_a_bot_link(db: Database, family: Family) -> None:
+    app = build_web(_settings(web_url="https://ea.example"), family, db)
+    client = TestClient(app, base_url="https://testserver")  # a Secure cookie needs https
+    r = client.get("/")  # not logged in: a page for a person, not JSON
+    assert r.status_code == 401 and "напиши боту /web" in r.text
+
+    token = sign("s", "link", "anna", LINK_TTL)
+    r = client.get("/login", params={"t": token, "next": "/facts"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/facts"
+    cookie = r.headers["set-cookie"]
+    assert cookie.startswith("session=") and "HttpOnly" in cookie and "Secure" in cookie
+    assert "Max-Age=31536000" in cookie and "SameSite=lax" in cookie
+    assert client.get("/").status_code == 200  # the client keeps the cookie
+    assert "Анна" in client.get("/family").text
+
+    # once the browser is logged in, a stale or foreign link just opens the page
+    r = client.get("/login", params={"t": "garbage"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/"
+
+
+def test_login_rejects_bad_links(db: Database, family: Family) -> None:
+    client = TestClient(build_web(_settings(), family, db))
+    stale = sign("s", "link", "anna", LINK_TTL, now=datetime(2000, 1, 1, tzinfo=UTC))
+    bad = [
+        "",
+        "garbage",
+        stale,
+        sign("s", "session", "anna", SESSION_TTL),  # a cookie is not a link
+        sign("s", "link", "ghost", LINK_TTL),  # not in the family
+        sign("other", "link", "anna", LINK_TTL),
+    ]
+    for t in bad:
+        r = client.get("/login", params={"t": t})
+        assert r.status_code == 403 and "застаріло" in r.text, t
+    assert not client.cookies
+    assert client.get("/", headers=_auth("ghost")).status_code == 401
+    link_as_cookie = {"Cookie": f"session={sign('s', 'link', 'anna', LINK_TTL)}"}
+    assert client.get("/", headers=link_as_cookie).status_code == 401
+    # no open redirects
+    good = sign("s", "link", "anna", LINK_TTL)
+    r = client.get("/login", params={"t": good, "next": "//evil.example/"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/"

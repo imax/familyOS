@@ -1,23 +1,24 @@
-"""Web view: what the system actually stored. Server-rendered, basic auth.
+"""Web view: what the system actually stored. Server-rendered; identity comes from the bot.
 
-Read-only except `/facts` and `/family`, the two things a human edits by hand.
-Commitments are closed only through the LLM's `close` op (web done/drop was removed).
+There is no password. `/web` in Telegram (and «Відкрити» under the digest) sends a member
+a link to `/login?t=…`; opening it sets a long-lived signed cookie. Read-only except
+`/facts` and `/family`, the two things a human edits by hand. Commitments are closed only
+through the LLM's `close` op (web done/drop was removed).
 """
 
 import json
 import logging
-import secrets
 import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
+from .auth import SESSION_TTL, sign, verify
 from .config import Settings
 from .context import (
     build_timeline,
@@ -27,13 +28,23 @@ from .context import (
     fmt_event_when,
     fts_query,
 )
-from .db import Database
+from .db import Database, Member
 from .family import Family
 from .ical import commitment_ics, event_ics, ics_filename
 
 log = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+SESSION_COOKIE = "session"
+
+
+class NotLoggedIn(Exception):
+    """Rendered as a small page telling the person to ask the bot for a link."""
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
 
 
 def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
@@ -48,23 +59,62 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
         json.dumps(json.loads(s), ensure_ascii=False, indent=2) if s else ""
     )
 
-    security = HTTPBasic(realm="family")
+    def secret() -> str:
+        if not settings.web_secret:
+            raise HTTPException(status_code=503, detail="web auth not configured: set WEB_SECRET")
+        return settings.web_secret
 
-    def authed(credentials: Annotated[HTTPBasicCredentials, Depends(security)]) -> None:
-        if not settings.web_user or not settings.web_password:
-            raise HTTPException(status_code=503, detail="web auth not configured")
-        user_ok = secrets.compare_digest(credentials.username.encode(), settings.web_user.encode())
-        pass_ok = secrets.compare_digest(
-            credentials.password.encode(), settings.web_password.encode()
+    def member_from_cookie(request: Request) -> Member | None:
+        token = request.cookies.get(SESSION_COOKIE)
+        if not settings.web_secret or not token:
+            return None
+        subject = verify(settings.web_secret, token, "session")
+        return family.get(subject) if subject else None
+
+    def authed(request: Request) -> Member:
+        secret()
+        member = member_from_cookie(request)
+        if member is None:
+            raise NotLoggedIn("Щоб увійти, напиши боту /web.", 401)
+        return member
+
+    @app.exception_handler(NotLoggedIn)
+    async def not_logged_in(request: Request, exc: NotLoggedIn) -> HTMLResponse:
+        return templates.TemplateResponse(
+            request, "login.html", {"message": exc.message}, status_code=exc.status_code
         )
-        if not (user_ok and pass_ok):
-            raise HTTPException(
-                status_code=401, detail="unauthorized", headers={"WWW-Authenticate": "Basic"}
-            )
 
     @app.get("/healthz")
     async def healthz() -> dict[str, bool]:
         return {"ok": True}
+
+    @app.get("/login")
+    async def login(
+        request: Request, t: str = "", next_path: Annotated[str, Query(alias="next")] = "/"
+    ) -> Response:
+        """The link the bot sent: set the session cookie and go where the link pointed.
+
+        Someone already logged in on this browser stays who they are, whatever the link
+        says; that is how the digest button keeps working after its link expired.
+        """
+        key = secret()
+        target = next_path if next_path.startswith("/") and not next_path.startswith("//") else "/"
+        if member_from_cookie(request) is not None:
+            return RedirectResponse(target, status_code=303)
+        subject = verify(key, t, "link")
+        member = family.get(subject) if subject else None
+        if member is None:
+            raise NotLoggedIn("Посилання застаріло. Напиши боту /web, він дасть нове.", 403)
+        response = RedirectResponse(target, status_code=303)
+        response.set_cookie(
+            SESSION_COOKIE,
+            sign(key, "session", member.id, SESSION_TTL),
+            max_age=int(SESSION_TTL.total_seconds()),
+            httponly=True,
+            secure=bool(settings.web_url and settings.web_url.startswith("https")),
+            samesite="lax",
+        )
+        return response
 
     @app.get("/", response_class=HTMLResponse, dependencies=[Depends(authed)])
     async def index(request: Request, q: str | None = None) -> HTMLResponse:
@@ -181,9 +231,14 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
             request, "messages.html", {"messages": db.list_messages(limit=200)}
         )
 
-    @app.get("/backup.db", dependencies=[Depends(authed)])
-    async def backup() -> Response:
-        """The whole database as one consistent file; `python -m family_ea pull` fetches it."""
+    @app.get("/backup.db")
+    async def backup(request: Request) -> Response:
+        """The whole database as one consistent file; `python -m family_ea pull` fetches it
+        with a `backup` token it signs itself, sent as a bearer token."""
+        key = secret()
+        scheme, _, token = request.headers.get("authorization", "").partition(" ")
+        if scheme.lower() != "bearer" or verify(key, token.strip(), "backup") is None:
+            raise HTTPException(status_code=401, detail="unauthorized")
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "family.db"
             db.backup_to(path)

@@ -11,6 +11,7 @@ from pathlib import Path
 import httpx
 import uvicorn
 
+from .auth import BACKUP_TTL, sign
 from .bot import build_bot
 from .config import Settings
 from .context import fmt_dt
@@ -38,7 +39,7 @@ def build_pipeline(settings: Settings, db: Database, family: Family) -> Pipeline
 
 
 async def serve(settings: Settings) -> None:
-    settings.require("telegram_token", "anthropic_api_key", "web_user", "web_password")
+    settings.require("telegram_token", "anthropic_api_key", "web_secret")
     if settings.admin_user_id is None:
         # Bootstrap mode: nobody is let in, but the bot answers strangers with their id.
         log.warning("ADMIN_USER_ID is not set: write to the bot to learn your id, then set it")
@@ -123,12 +124,11 @@ def pull(
     base = (url or settings.web_url or "").rstrip("/")
     if not base:
         raise SystemExit("where is the web view? set WEB_URL in .env or pass --url")
-    settings.require("web_user", "web_password")
-    assert settings.web_user and settings.web_password
-    with httpx.Client(
-        auth=(settings.web_user, settings.web_password), timeout=60, transport=transport
-    ) as client:
-        response = client.get(f"{base}/backup.db")
+    settings.require("web_secret")
+    assert settings.web_secret
+    token = sign(settings.web_secret, "backup", "cli", BACKUP_TTL)
+    with httpx.Client(timeout=60, transport=transport) as client:
+        response = client.get(f"{base}/backup.db", headers={"Authorization": f"Bearer {token}"})
     response.raise_for_status()
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(response.content)

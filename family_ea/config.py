@@ -20,8 +20,7 @@ class Settings:
     openai_api_key: str | None
     database_path: Path
     admin_user_id: int | None  # Telegram id of the admin; everyone else is in the db
-    web_user: str | None
-    web_password: str | None
+    web_secret: str | None  # signs web links and cookies; no passwords
     web_url: str | None
     llm_model: str
     llm_effort: str
@@ -67,8 +66,7 @@ def load_settings() -> Settings:
         openai_api_key=_env("OPENAI_API_KEY"),
         database_path=Path(_env("DATABASE_PATH", "./data/family.db") or ""),
         admin_user_id=_env_int("ADMIN_USER_ID"),
-        web_user=_env("WEB_USER"),
-        web_password=_env("WEB_PASSWORD"),
+        web_secret=_env("WEB_SECRET"),
         web_url=_env("WEB_URL"),
         llm_model=_env("LLM_MODEL", "claude-sonnet-5") or "",
         llm_effort=_env("LLM_EFFORT", "medium") or "",

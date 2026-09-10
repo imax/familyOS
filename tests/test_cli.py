@@ -7,6 +7,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from family_ea.auth import BACKUP_TTL, sign
 from family_ea.db import Database
 from family_ea.family import Family
 from family_ea.main import llm_result_lines, pull, show_log
@@ -21,6 +22,10 @@ LLM_RESULT = (
 )
 
 OP_LINE = "commitment create: text='Стоматолог', owner='anna', due_at='2000-01-01T15:30:00+02:00'"
+
+
+def _bearer() -> dict[str, str]:
+    return {"Authorization": "Bearer " + sign("s", "backup", "cli", BACKUP_TTL)}
 
 
 def _seed(db: Database) -> None:
@@ -44,8 +49,10 @@ def test_backup_endpoint_is_a_consistent_sqlite_file(
     _seed(db)
     client = TestClient(build_web(_settings(), family, db))
     assert client.get("/backup.db").status_code == 401
+    assert client.get("/backup.db", headers=_auth()).status_code == 401  # a cookie is not enough
+    assert client.get("/backup.db", headers={"Authorization": "Bearer nope"}).status_code == 401
 
-    response = client.get("/backup.db", headers=_auth())
+    response = client.get("/backup.db", headers=_bearer())
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/vnd.sqlite3")
     assert 'filename="family-' in response.headers["content-disposition"]
@@ -79,14 +86,16 @@ def test_pull_downloads_the_snapshot_and_drops_sftp_leftovers(
         transport=httpx.MockTransport(handler),
     )
     assert [str(r.url) for r in seen] == ["https://ea.example/backup.db"]
-    assert seen[0].headers["authorization"].startswith("Basic ")
+    assert seen[0].headers["authorization"].startswith("Bearer ")
     assert _rows(dest)[0] == ("oleh", "Стоматолог завтра о 15:30")
     assert not Path(f"{dest}-wal").exists()
 
 
-def test_pull_needs_a_url(tmp_path: Path) -> None:
+def test_pull_needs_a_url_and_the_secret(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="WEB_URL"):
         pull(_settings(web_url=None), tmp_path / "prod.db")
+    with pytest.raises(SystemExit, match="WEB_SECRET"):
+        pull(_settings(web_url="https://ea.example", web_secret=None), tmp_path / "prod.db")
 
 
 def test_llm_result_lines() -> None:

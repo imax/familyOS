@@ -50,12 +50,14 @@ placeholders.
 ```bash
 fly launch --no-deploy        # first time only
 fly volumes create data --size 1 --region fra
-fly secrets set ADMIN_USER_ID=... TELEGRAM_BOT_TOKEN=... ANTHROPIC_API_KEY=... OPENAI_API_KEY=... WEB_USER=... WEB_PASSWORD=... WEB_URL=https://<app>.fly.dev
+fly secrets set ADMIN_USER_ID=... TELEGRAM_BOT_TOKEN=... ANTHROPIC_API_KEY=... OPENAI_API_KEY=... WEB_URL=https://<app>.fly.dev WEB_SECRET=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 fly deploy --ha=false         # one machine: one poller on the bot token, one SQLite
 ```
 
-The web view serves `GET /backup.db`, a consistent online backup of the database behind
-the same basic auth; `python -m family_ea pull` downloads it.
+The web view has no password: `/web` in Telegram (and the «Відкрити» button under the
+morning digest) sends a signed link that logs that browser in for a year. `GET /backup.db`
+is a consistent online backup of the database; `python -m family_ea pull` signs a
+short-lived bearer token with the same `WEB_SECRET` (put it in `.env`) and downloads it.
 
 ## License
 

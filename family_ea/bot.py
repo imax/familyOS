@@ -14,6 +14,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputFile,
+    LinkPreviewOptions,
     Message,
     Update,
 )
@@ -27,6 +28,7 @@ from telegram.ext import (
     filters,
 )
 
+from .auth import LINK_TTL, sign
 from .config import Settings
 from .context import bucket_commitments, build_agenda, digest_text, parse_iso
 from .db import Commitment, Database, Event, Member, Reminder
@@ -42,13 +44,43 @@ PRIVATE_BOT = "Це приватний сімейний бот."
 OPEN_ITEMS_WEEKDAY = 0  # Monday: the one morning the digest also lists undated items
 REMINDER_INTERVAL = 60  # seconds between checks for due reminders
 REMINDER_MAX_LATE = timedelta(hours=3)  # due longer ago than this (downtime): missed, not sent
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)  # login links in text: no preview fetch
+COMMANDS = [
+    BotCommand("today", "що сьогодні, що прострочено, що висить"),
+    BotCommand("web", "відкрити веб-сторінку сім'ї"),
+    BotCommand("facts", "факти про сім'ю, які бачить асистент"),
+    BotCommand("help", "що вміє бот і його команди"),
+    BotCommand("debug", "що модель повернула на останнє повідомлення"),
+]
 
 
 def _clip(text: str) -> str:
     return text if len(text) <= TG_MAX_LEN else text[: TG_MAX_LEN - 1] + "…"
 
 
-def ics_keyboard(items: list[Event | Commitment]) -> InlineKeyboardMarkup | None:
+def help_text(settings: Settings) -> str:
+    """What the bot does and its commands; /start and /help say this."""
+    when = settings.digest_time.strftime("%H:%M")
+    commands = "\n".join(f"/{c.command} — {c.description}" for c in COMMANDS)
+    return (
+        "Пиши або наговорюй що завгодно: що сталося, що треба зробити, кого як звати. "
+        f"Питай — відповім з того, що знаю. Щоранку о {when} надсилаю дайджест, а нагадую, "
+        f"коли попросиш.\n\nКоманди:\n{commands}"
+    )
+
+
+def login_link(settings: Settings, member: Member, path: str = "/") -> str | None:
+    """A link that logs `member` into the web view and opens `path`; None when the web is
+    not configured. Valid for LINK_TTL, then the person asks for a new one with /web."""
+    if not settings.web_url or not settings.web_secret:
+        return None
+    query = {"t": sign(settings.web_secret, "link", member.id, LINK_TTL)}
+    if path != "/":
+        query["next"] = path
+    return f"{settings.web_url.rstrip('/')}/login?{urlencode(query)}"
+
+
+def ics_rows(items: list[Event | Commitment]) -> list[list[InlineKeyboardButton]]:
     """One «📅 …» button per event or dated commitment; tapping it sends an .ics file."""
     rows = []
     for item in items:
@@ -59,6 +91,20 @@ def ics_keyboard(items: list[Event | Commitment]) -> InlineKeyboardMarkup | None
         else:
             continue
         rows.append([InlineKeyboardButton(f"📅 {item.text[:40]}", callback_data=data)])
+    return rows
+
+
+def ics_keyboard(items: list[Event | Commitment]) -> InlineKeyboardMarkup | None:
+    rows = ics_rows(items)
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
+def digest_keyboard(
+    items: list[Event | Commitment], web: str | None
+) -> InlineKeyboardMarkup | None:
+    """«Відкрити» the web view on top, then «📅» per dated item."""
+    rows = [[InlineKeyboardButton("Відкрити", url=web)]] if web else []
+    rows += ics_rows(items)
     return InlineKeyboardMarkup(rows) if rows else None
 
 
@@ -166,9 +212,8 @@ def build_bot(
         )
         db.set_tg_message_id(outcome.bot_message_id, sent.message_id)
 
-    def digest(
-        now: datetime, *, include_open: bool
-    ) -> tuple[str, InlineKeyboardMarkup | None] | None:
+    def digest(now: datetime, *, include_open: bool) -> tuple[str, list[Event | Commitment]] | None:
+        """The digest text and the items it lists; the keyboard is built per recipient."""
         agenda = build_agenda(db.planned_events(), now)
         buckets = bucket_commitments(db.open_commitments(), now)
         text = digest_text(agenda, buckets, family, settings.tz, include_open=include_open)
@@ -176,7 +221,7 @@ def build_bot(
             return None
         items: list[Event | Commitment] = [*agenda.today, *agenda.tomorrow]
         items += [*buckets.today, *buckets.overdue]
-        return _clip(text), ics_keyboard(items)
+        return _clip(text), items
 
     async def send_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
         """The morning job: one shared digest to every member; silence when it is empty."""
@@ -185,10 +230,11 @@ def build_bot(
         if result is None:
             log.info("digest: nothing to say today")
             return
-        text, keyboard = result
+        text, items = result
         for member in family.members:
             if member.telegram_id is None:
                 continue
+            keyboard = digest_keyboard(items, login_link(settings, member))
             try:
                 sent = await context.bot.send_message(
                     member.telegram_id, text, reply_markup=keyboard
@@ -217,7 +263,8 @@ def build_bot(
         if result is None:
             await update.message.reply_text("Нічого не висить.")
             return
-        text, keyboard = result
+        text, items = result
+        keyboard = digest_keyboard(items, login_link(settings, person))
         sent = await update.message.reply_text(text, reply_markup=keyboard)
         mid = db.insert_message("bot", person.id, text)
         db.set_tg_message_id(mid, sent.message_id)
@@ -252,15 +299,18 @@ def build_bot(
         person = member_of(update)
         assert update.message and person
         hints = []
-        if settings.web_url:
-            hints.append(f"Факти про сім'ю можна заповнити на web: {settings.web_url}/facts")
+        if facts_link := login_link(settings, person, "/facts"):
+            hints.append(f"Факти про сім'ю можна заповнити на вебі: {facts_link}")
             if family.is_admin(person.telegram_id or 0) and len(family.members) == 1:
-                hints.append(f"Додати інших до сім'ї: {settings.web_url}/family")
-        hint = "".join(f" {h}" for h in hints)
+                hints.append(f"Додати інших до сім'ї: {login_link(settings, person, '/family')}")
+        hint = "".join(f"\n\n{h}" for h in hints)
         await update.message.reply_text(
-            f"Привіт, {person.name}! Пиши або наговорюй що завгодно: що сталося, що треба "
-            f"зробити, кого як звати. Питай — відповім з того, що знаю.{hint}"
+            f"Привіт, {person.name}! {help_text(settings)}{hint}", link_preview_options=NO_PREVIEW
         )
+
+    async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        assert update.message
+        await update.message.reply_text(help_text(settings))
 
     async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         person = member_of(update)
@@ -317,8 +367,18 @@ def build_bot(
             await update.message.reply_text(f"Фактів ще нема.{where}")
 
     async def web(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        assert update.message
-        await update.message.reply_text(settings.web_url or "WEB_URL не налаштовано.")
+        """A login link for this member; the browser then remembers them for a year."""
+        person = member_of(update)
+        assert update.message and person
+        link = login_link(settings, person)
+        if link is None:
+            await update.message.reply_text("Веб не налаштовано: потрібні WEB_URL і WEB_SECRET.")
+            return
+        await update.message.reply_text(
+            "Веб-сторінка сім'ї: усе, що я записав, по днях. Посилання діє добу; після "
+            "входу браузер пам'ятає тебе.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Відкрити", url=link)]]),
+        )
 
     async def stranger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Not in the family: say so, and tell the admin once who knocked."""
@@ -332,28 +392,24 @@ def build_bot(
         notified_strangers.add(user.id)
         who = user.full_name + (f" (@{user.username})" if user.username else "")
         text = f"Боту пише {who}, Telegram id {user.id}."
-        if settings.web_url:
-            query = urlencode({"name": user.first_name or "", "telegram_id": user.id})
-            text += f" Додати до сім'ї: {settings.web_url}/family?{query}"
+        admin = family.by_telegram_id(family.admin_telegram_id)
+        query = urlencode({"name": user.first_name or "", "telegram_id": user.id})
+        if admin and (link := login_link(settings, admin, f"/family?{query}")):
+            text += f" Додати до сім'ї: {link}"
         try:
-            await context.bot.send_message(chat_id=family.admin_telegram_id, text=text)
+            await context.bot.send_message(
+                chat_id=family.admin_telegram_id, text=text, link_preview_options=NO_PREVIEW
+            )
         except Exception:
             log.warning("could not notify the admin about user %s", user.id, exc_info=True)
 
     async def post_init(app: Application) -> None:
-        await app.bot.set_my_commands(
-            [
-                BotCommand("start", "привітання"),
-                BotCommand("today", "що сьогодні, що прострочено, що висить"),
-                BotCommand("debug", "що LLM повернув на останнє повідомлення"),
-                BotCommand("facts", "факти про сім'ю, які бачить асистент"),
-                BotCommand("web", "лінк на web view"),
-            ]
-        )
+        await app.bot.set_my_commands(COMMANDS)
 
     app = Application.builder().token(settings.telegram_token).post_init(post_init).build()
     allowed = family_filter(family)
     app.add_handler(CommandHandler("start", start, filters=allowed))
+    app.add_handler(CommandHandler("help", help_cmd, filters=allowed))
     app.add_handler(CommandHandler("today", today, filters=allowed))
     app.add_handler(CommandHandler("debug", debug, filters=allowed))
     app.add_handler(CommandHandler("facts", facts, filters=allowed))

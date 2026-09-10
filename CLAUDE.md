@@ -24,14 +24,16 @@ uv run ruff check . && uv run ruff format .
 fly deploy --ha=false                     # deploy; never without --ha=false (see Production)
 ```
 
-`pull` needs `WEB_URL`, `WEB_USER` and `WEB_PASSWORD` in `.env`; it downloads
-`GET /backup.db`, a consistent online backup, WAL included.
+`pull` needs `WEB_URL` and `WEB_SECRET` in `.env`; it signs a short-lived bearer token and
+downloads `GET /backup.db`, a consistent online backup, WAL included.
 
 ## Layout
 
 ```
 family_ea/
   config.py     env -> Settings (.env loaded in dev)
+  auth.py       signed tokens (HMAC under WEB_SECRET): a `link` from the bot becomes a
+                `session` cookie; `pull` signs a `backup` bearer. Nothing is stored.
   family.py     Family over the members table (+ ADMIN_USER_ID); slugify() makes ids from names
   db.py         SQLite schema + all queries; dataclasses Message/Memory/Event/Commitment/
                 Reminder; backup_to() is the online backup behind GET /backup.db
@@ -43,11 +45,13 @@ family_ea/
   pipeline.py   store -> context -> LLM -> ops -> reply
   transcribe.py OpenAI gpt-4o-transcribe via httpx
   ical.py       an event or dated commitment -> .ics bytes (timed or all-day)
-  bot.py        python-telegram-bot handlers (/start /today /debug /facts /web, text, voice),
-                the 08:30 digest job, the per-minute reminder job, «📅» buttons that send an .ics
-  web.py        FastAPI + Jinja: GET / (the timeline; ?q= searches), GET/POST /facts,
-                GET/POST /family, GET /memories, GET /messages, GET /events/:id.ics,
-                GET /commitments/:id.ics, GET /backup.db
+  bot.py        python-telegram-bot handlers (/start /help /today /debug /facts /web, text,
+                voice), the 08:30 digest job, the per-minute reminder job, «📅» buttons that
+                send an .ics, «Відкрити» (a login link) under the digest and /today
+  web.py        FastAPI + Jinja: GET /login?t= (the bot's link; sets the cookie), GET / (the
+                timeline; ?q= searches), GET/POST /facts, GET/POST /family, GET /memories,
+                GET /messages, GET /events/:id.ics, GET /commitments/:id.ics,
+                GET /backup.db (bearer token)
   main.py       serve() runs bot + uvicorn in one loop; chat() REPL; pull(); show_log()
 tests/          deterministic; the LLM is faked, nothing hits the network
 ```
@@ -73,6 +77,10 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   sent by a per-minute job when `at` comes, to the one member it is for or to everyone.
   Both are stored as bot messages in each recipient's chat so replies to them have
   context. Anything else the bot sends on its own must follow the same two rules.
+- **Web identity comes from the bot.** No passwords: `/web` (and the «Відкрити» button under
+  the digest) sends a member a signed link, opening it sets a year-long signed cookie.
+  Whoever is in `members` can log in; nothing is stored, so removing a member or rotating
+  `WEB_SECRET` is the only revocation.
 - The bot must not promise what the code cannot do. The prompt lists what the bot does
   (digest, reminders, «📅»); when a capability is added or removed, that list changes in
   the same commit.
@@ -86,7 +94,7 @@ tests/          deterministic; the LLM is faked, nothing hits the network
 - **Always `fly deploy --ha=false`.** Two machines would mean two pollers on one bot token
   and two SQLite files.
 - Secrets on Fly: `ADMIN_USER_ID`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-  `TELEGRAM_BOT_TOKEN`, `WEB_USER`, `WEB_PASSWORD`, `WEB_URL`. The rest is in `fly.toml`.
+  `TELEGRAM_BOT_TOKEN`, `WEB_SECRET`, `WEB_URL`. The rest is in `fly.toml`.
 - A deploy ships code only. Tables are created at start (`CREATE TABLE IF NOT EXISTS`);
   there are no migrations yet, so a new column means a new table or a hand-run `ALTER`.
 - Local `data/family.db` and production are separate databases; nothing syncs. To look at
