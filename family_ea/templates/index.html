@@ -6,10 +6,11 @@
   {% for r in timeline.overdue %}{% include "_row.html" %}{% endfor %}
 </ul>
 {% endif %}
+{# a day is listed only when it has rows, except today: an empty day is always today #}
 {% for day in timeline.days %}
 <h2>{{ day.title }}</h2>
 <ul class="rows dated">
-  {% for r in day.rows %}{% include "_row.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
+  {% for r in day.rows %}{% include "_row.html" %}{% else %}<li class="empty">Відпочиваємо :-)</li>{% endfor %}
 </ul>
 {% endfor %}
 <h2>Без дати</h2>

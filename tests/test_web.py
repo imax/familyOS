@@ -72,7 +72,7 @@ def test_web_pages(db: Database, family: Family) -> None:
     search = client.get("/", params={"q": "котл"}, headers=_auth())
     assert "нічого" in search.text  # no memory mentions "котл..."
     search = client.get("/", params={"q": "газов"}, headers=_auth())
-    assert "замінив клапан" in search.text
+    assert "замінив клапан" in search.text and 'class="id"' not in search.text
 
     messages = client.get("/messages", headers=_auth())
     assert "бот → Олег" in messages.text and "Записав." in messages.text

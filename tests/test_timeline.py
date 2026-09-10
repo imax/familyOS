@@ -146,6 +146,7 @@ def test_web_home_is_a_timeline(
     assert '<li class="event">' in home and 'href="/events/1.ics"' in home
     assert home.index("<h2>Без дати</h2>") < home.index("☐</span>Подзвонити газовику Петру")
     assert "Газовик" not in home  # memories have their own page
+    assert 'class="id"' not in home  # database ids are not for people
 
     memories = client.get("/memories", headers=_auth()).text
     assert "Газовик Петро" in memories and "Олег" in memories
@@ -156,4 +157,5 @@ def test_web_home_empty(db: Database, family: Family, monkeypatch: pytest.Monkey
     client = TestClient(build_web(_settings(), family, db))
     home = client.get("/", headers=_auth()).text
     assert "Прострочено" not in home and "Завтра" not in home
-    assert home.count("нічого") == 2  # today and undated, both empty
+    assert "Відпочиваємо :-)" in home  # today, empty
+    assert home.count("нічого") == 1  # undated, empty

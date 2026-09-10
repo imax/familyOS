@@ -5,9 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Family EA{% endblock %}</title>
 <style>
-  body { font: 15px/1.45 system-ui, sans-serif; max-width: 52rem; margin: 1.5rem auto; padding: 0 1rem; color: #222; }
-  nav { display: flex; gap: 1rem; align-items: center; margin-bottom: 1.5rem; }
+  body { font: 15px/1.45 system-ui, sans-serif; max-width: 52rem; margin: 1.5rem auto; padding: 0 1rem; color: #222; overflow-wrap: anywhere; }
+  nav { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1.5rem; }
   nav form { margin-left: auto; }
+  nav input[type=search] { font: inherit; padding: .3rem .4rem; width: 9rem; max-width: 100%; box-sizing: border-box; }
+  .admin { position: relative; }
+  .admin summary { cursor: pointer; color: #555; }
+  .admin div { position: absolute; left: 0; top: 100%; z-index: 1; min-width: 10rem; margin-top: .3rem; padding: .3rem 0;
+               background: #fff; border: 1px solid #ddd; border-radius: .4rem; box-shadow: 0 2px 8px rgba(0, 0, 0, .08); }
+  .admin a { display: block; padding: .35rem 1rem; }
   h2 { font-size: 1.05rem; margin: 1.5rem 0 .5rem; border-bottom: 1px solid #ddd; padding-bottom: .25rem; }
   ul { list-style: none; padding: 0; margin: 0; }
   li { padding: .35rem 0; border-bottom: 1px solid #f0f0f0; }
@@ -17,16 +23,18 @@
   .overdue .meta { color: #b33; }
   pre { background: #f6f6f6; padding: .6rem; overflow-x: auto; font-size: .8rem; }
   details summary { cursor: pointer; color: #555; font-size: .85rem; }
+  .admin summary { font-size: inherit; }
   .status-done, .status-dropped, .status-cancelled { text-decoration: line-through; color: #888; }
   textarea { width: 100%; box-sizing: border-box; font: inherit; padding: .5rem; }
   button { font: inherit; padding: .4rem 1rem; margin-top: .5rem; }
   .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
-  .row input { font: inherit; padding: .3rem .4rem; }
+  .row input { font: inherit; padding: .3rem .4rem; min-width: 0; max-width: 100%; box-sizing: border-box; }
   .row button { margin-top: 0; }
   .error { color: #b33; }
   .ical { text-decoration: none; margin-left: .4rem; }
   h2.overdue { color: #b33; }
-  .dated li { display: grid; grid-template-columns: 3.6rem 1fr; column-gap: .5rem; }
+  .dated li { display: grid; grid-template-columns: 3.6rem minmax(0, 1fr); column-gap: .5rem; }
+  .dated .empty { display: block; }
   .time { color: #444; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .mark { margin-right: .25rem; }
   .reminder, .reminder .time { color: #888; }
@@ -36,10 +44,15 @@
 <body>
 <nav>
   <a href="/">Головна</a>
-  <a href="/facts">Факти</a>
-  <a href="/family">Сім'я</a>
-  <a href="/memories">Memories</a>
-  <a href="/messages">Повідомлення</a>
+  <details class="admin">
+    <summary>Адмін</summary>
+    <div>
+      <a href="/facts">Факти</a>
+      <a href="/family">Сім'я</a>
+      <a href="/memories">Memories</a>
+      <a href="/messages">Повідомлення</a>
+    </div>
+  </details>
   <form method="get" action="/"><input type="search" name="q" value="{{ q or '' }}" placeholder="пошук"></form>
 </nav>
 {% block body %}{% endblock %}

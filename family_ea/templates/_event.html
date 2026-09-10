@@ -1,5 +1,5 @@
 <li class="status-{{ e.status }}">
-  <span class="id">#{{ e.id }}</span><b>{{ e | when }}</b> {{ e.text }}
+  <b>{{ e | when }}</b> {{ e.text }}
   <a class="ical" href="/events/{{ e.id }}.ics" title="в календар (.ics)">📅</a>
   <div class="meta">
     {% if e.who %}{{ e.who | person }} · {% endif %}
