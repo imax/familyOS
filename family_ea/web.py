@@ -7,6 +7,7 @@ Commitments are closed only through the LLM's `close` op (web done/drop was remo
 import json
 import logging
 import secrets
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -176,6 +177,20 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
     async def messages(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(
             request, "messages.html", {"messages": db.list_messages(limit=200)}
+        )
+
+    @app.get("/backup.db", dependencies=[Depends(authed)])
+    async def backup() -> Response:
+        """The whole database as one consistent file; `python -m family_ea pull` fetches it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "family.db"
+            db.backup_to(path)
+            data = path.read_bytes()
+        stamp = datetime.now(settings.tz).strftime("%Y-%m-%d-%H%M")
+        return Response(
+            data,
+            media_type="application/vnd.sqlite3",
+            headers={"Content-Disposition": f'attachment; filename="family-{stamp}.db"'},
         )
 
     return app

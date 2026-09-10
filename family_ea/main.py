@@ -1,14 +1,19 @@
-"""Process entry points: `serve` (bot + web in one event loop) and `chat` (local REPL)."""
+"""Process entry points: `serve` (bot + web in one event loop), `chat` (local REPL),
+`pull` (snapshot of the deployed database) and `log` (messages with what the LLM did)."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from pathlib import Path
 
+import httpx
 import uvicorn
 
 from .bot import build_bot
 from .config import Settings
+from .context import fmt_dt
 from .db import Database
 from .family import Family
 from .llm import Llm
@@ -101,4 +106,79 @@ async def chat(settings: Settings, as_user: str, name: str | None = None) -> Non
         for a in outcome.applied:
             flag = "ok" if a.ok else "SKIPPED"
             print(f"     [{flag}] {a.kind} {a.op} #{a.id} {a.note}")
+    db.close()
+
+
+def pull(
+    settings: Settings,
+    dest: Path,
+    url: str | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> Path:
+    """Download a consistent snapshot of the deployed database (its `GET /backup.db`).
+
+    Replaces `fly ssh sftp get`, which copies the main file but not the -wal file with
+    the latest writes. `transport` is for tests.
+    """
+    base = (url or settings.web_url or "").rstrip("/")
+    if not base:
+        raise SystemExit("where is the web view? set WEB_URL in .env or pass --url")
+    settings.require("web_user", "web_password")
+    assert settings.web_user and settings.web_password
+    with httpx.Client(
+        auth=(settings.web_user, settings.web_password), timeout=60, transport=transport
+    ) as client:
+        response = client.get(f"{base}/backup.db")
+    response.raise_for_status()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(response.content)
+    for sidecar in (Path(f"{dest}-wal"), Path(f"{dest}-shm")):
+        sidecar.unlink(missing_ok=True)  # leftovers of an sftp copy would be applied to this file
+    print(f"{len(response.content)} bytes -> {dest}")
+    return dest
+
+
+_OP_KIND = {"memories": "memory", "events": "event", "commitments": "commitment"}
+
+
+def llm_result_lines(raw: str) -> list[str]:
+    """`messages.llm_result` as short lines: model and tokens, each op, each applied result."""
+    d = json.loads(raw)
+    if "error" in d:
+        return [f"error: {d['error']}"]
+    lines: list[str] = []
+    usage = d.get("usage") or {}
+    if usage:
+        lines.append(
+            f"{d.get('model')}: {usage.get('input_tokens')} in, {usage.get('output_tokens')} out"
+        )
+    output = d.get("output") or {}
+    for key, kind in _OP_KIND.items():
+        for op in output.get(key, []):
+            fields = ", ".join(f"{k}={v!r}" for k, v in op.items() if k != "op" and v is not None)
+            lines.append(f"{kind} {op.get('op')}: {fields}")
+    for a in d.get("applied", []):
+        flag = "ok" if a.get("ok") else "SKIPPED"
+        note = a.get("note") or ""
+        lines.append(f"[{flag}] {a.get('kind')} {a.get('op')} #{a.get('id')} {note}".rstrip())
+    return lines
+
+
+def show_log(settings: Settings, db_path: Path, last: int) -> None:
+    """Print the last N messages, oldest first, with what the LLM returned and what was applied.
+
+    Works on any database file, e.g. the one `pull` just fetched.
+    """
+    db = Database(db_path)
+    family = Family(db, settings.admin_user_id)
+    for m in db.recent_messages(last):
+        if m.user_id == "bot":
+            who = f"bot -> {family.display_name(m.chat_with)}"
+        else:
+            who = family.display_name(m.user_id)
+        voice = " (voice)" if m.is_voice else ""
+        print(f"#{m.id} {fmt_dt(m.created_at, settings.tz)} {who}{voice}: {m.raw_text}")
+        if m.llm_result:
+            for line in llm_result_lines(m.llm_result):
+                print(f"    {line}")
     db.close()

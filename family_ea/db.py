@@ -219,6 +219,17 @@ class Database:
     def close(self) -> None:
         self.conn.close()
 
+    def backup_to(self, path: Path | str) -> None:
+        """A consistent copy of the whole database via SQLite's online backup.
+
+        Copying the file with sftp misses whatever still sits in the -wal file; this does not.
+        """
+        dst = sqlite3.connect(str(path))
+        try:
+            self.conn.backup(dst)
+        finally:
+            dst.close()
+
     # --- messages -----------------------------------------------------------
 
     def insert_message(

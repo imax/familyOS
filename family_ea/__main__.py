@@ -1,15 +1,17 @@
 """CLI.
 
-`python -m family_ea [serve]` runs bot + web; `python -m family_ea chat --as oleh` is a REPL.
+`python -m family_ea [serve]` runs bot + web; `chat --as oleh` is a REPL; `pull` downloads
+a snapshot of the deployed database; `log` prints messages with what the LLM did.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+from pathlib import Path
 
 from .config import load_settings
-from .main import chat, serve, setup_logging
+from .main import chat, pull, serve, setup_logging, show_log
 
 
 def main() -> None:
@@ -19,12 +21,24 @@ def main() -> None:
     chat_parser = sub.add_parser("chat", help="talk to the pipeline from the terminal")
     chat_parser.add_argument("--as", dest="as_user", required=True, help="family member id")
     chat_parser.add_argument("--name", help="display name; creates the member if it is new")
+    pull_parser = sub.add_parser("pull", help="download a snapshot of the deployed database")
+    pull_parser.add_argument("--url", help="web view URL (default: WEB_URL)")
+    pull_parser.add_argument(
+        "--to", type=Path, default=Path("data/prod.db"), help="where to save it"
+    )
+    log_parser = sub.add_parser("log", help="print messages with what the LLM did")
+    log_parser.add_argument("--db", type=Path, help="database file (default: DATABASE_PATH)")
+    log_parser.add_argument("--last", type=int, default=50, help="how many messages")
     args = parser.parse_args()
 
     setup_logging()
     settings = load_settings()
     if args.command == "chat":
         asyncio.run(chat(settings, args.as_user, args.name))
+    elif args.command == "pull":
+        pull(settings, args.to, args.url)
+    elif args.command == "log":
+        show_log(settings, args.db or settings.database_path, args.last)
     else:
         asyncio.run(serve(settings))
 

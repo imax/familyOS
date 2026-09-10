@@ -14,7 +14,8 @@ put on the calendar, and which open loops to create, update, or close. Everythin
 digest, the "what's today" query, storage, and the web view, is plain
 deterministic code. The model remembers nothing between calls.
 
-Full spec (in Ukrainian): [docs/spec-v3.md](docs/spec-v3.md).
+The original spec (in Ukrainian): [docs/spec-v3.md](docs/spec-v3.md). It is history now;
+what gets built next comes from real use.
 
 ## Stack
 
@@ -30,6 +31,8 @@ cp .env.example .env          # fill in tokens and ADMIN_USER_ID
 uv run python -m family_ea            # bot + web on :8080
 uv run python -m family_ea chat --as oleh --name Олег   # the pipeline without Telegram
 uv run pytest
+uv run python -m family_ea pull                          # snapshot of the deployed db -> data/prod.db
+uv run python -m family_ea log --db data/prod.db         # messages with what the LLM did
 ```
 
 `.env` and `data/` are gitignored. They hold the admin's Telegram id, secrets,
@@ -46,9 +49,12 @@ placeholders.
 ```bash
 fly launch --no-deploy        # first time only
 fly volumes create data --size 1 --region fra
-fly secrets set ADMIN_USER_ID=... TELEGRAM_BOT_TOKEN=... ANTHROPIC_API_KEY=... OPENAI_API_KEY=... WEB_USER=... WEB_PASSWORD=...
-fly deploy
+fly secrets set ADMIN_USER_ID=... TELEGRAM_BOT_TOKEN=... ANTHROPIC_API_KEY=... OPENAI_API_KEY=... WEB_USER=... WEB_PASSWORD=... WEB_URL=https://<app>.fly.dev
+fly deploy --ha=false         # one machine: one poller on the bot token, one SQLite
 ```
+
+The web view serves `GET /backup.db`, a consistent online backup of the database behind
+the same basic auth; `python -m family_ea pull` downloads it.
 
 ## License
 
@@ -59,4 +65,5 @@ MIT.
 Text and voice in; memories, events and commitments out; Q&A from context; a
 morning digest at 08:30 with today's and tomorrow's events and the day's
 commitments; `.ics` links on the web and «📅» buttons in Telegram that send an
-`.ics` file. Deployed; now in real use. Next: whatever hurts.
+`.ics` file. Deployed; now in real use. Next: reminders («нагадай за годину до…»),
+then whatever hurts.
