@@ -18,6 +18,7 @@ from .config import Settings
 from .context import fmt_dt
 from .db import Database
 from .family import Family
+from .files import FileStore, sha256_hex
 from .llm import Image, Llm
 from .pipeline import Pipeline
 from .transcribe import Transcriber
@@ -44,7 +45,7 @@ _IMAGE_TYPES = {
 
 def build_pipeline(settings: Settings, db: Database, family: Family) -> Pipeline:
     llm = Llm(settings.llm_model, settings.llm_effort, api_key=settings.anthropic_api_key)
-    return Pipeline(db, family, llm, settings.tz)
+    return Pipeline(db, family, llm, settings.tz, store=FileStore(settings.files_dir))
 
 
 async def serve(settings: Settings) -> None:
@@ -136,7 +137,9 @@ def pull(
     url: str | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> Path:
-    """Download a consistent snapshot of the deployed database (its `GET /backup.db`).
+    """Download a consistent snapshot of the deployed database (its `GET /backup.db`) and
+    the files it refers to that are not here yet (`GET /files.json`, then each missing
+    `GET /files/<sha256>`) into `<dest stem>-files/` next to it.
 
     Replaces `fly ssh sftp get`, which copies the main file but not the -wal file with
     the latest writes. `transport` is for tests.
@@ -147,15 +150,36 @@ def pull(
     settings.require("web_secret")
     assert settings.web_secret
     token = sign(settings.web_secret, "backup", "cli", BACKUP_TTL)
+    headers = {"Authorization": f"Bearer {token}"}
     with httpx.Client(timeout=60, transport=transport) as client:
-        response = client.get(f"{base}/backup.db", headers={"Authorization": f"Bearer {token}"})
-    response.raise_for_status()
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(response.content)
-    for sidecar in (Path(f"{dest}-wal"), Path(f"{dest}-shm")):
-        sidecar.unlink(missing_ok=True)  # leftovers of an sftp copy would be applied to this file
-    print(f"{len(response.content)} bytes -> {dest}")
+        response = client.get(f"{base}/backup.db", headers=headers)
+        response.raise_for_status()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(response.content)
+        for sidecar in (Path(f"{dest}-wal"), Path(f"{dest}-shm")):
+            sidecar.unlink(missing_ok=True)  # leftovers of an sftp copy would apply to this file
+        print(f"{len(response.content)} bytes -> {dest}")
+        _pull_files(client, base, headers, FileStore(dest.with_name(f"{dest.stem}-files")))
     return dest
+
+
+def _pull_files(client: httpx.Client, base: str, headers: dict[str, str], store: FileStore) -> None:
+    """Mirror the deployed files: fetch by hash what the local store lacks. Nothing here is
+    deleted or rewritten, so the directory only grows; rsync would do the same."""
+    listing = client.get(f"{base}/files.json", headers=headers)
+    listing.raise_for_status()
+    wanted = listing.json()
+    new = 0
+    for f in wanted:
+        if store.has(f["sha256"], f["mime"]):
+            continue
+        r = client.get(f"{base}/files/{f['sha256']}", headers=headers)
+        r.raise_for_status()
+        if sha256_hex(r.content) != f["sha256"]:
+            raise SystemExit(f"{base}/files/{f['sha256']}: content does not match its hash")
+        store.put(r.content, f["mime"])
+        new += 1
+    print(f"{len(wanted)} files, {new} new -> {store.root}")
 
 
 _OP_KIND = {

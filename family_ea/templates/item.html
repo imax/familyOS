@@ -6,6 +6,7 @@
   {% if item.removed_at %}<span class="status-dropped">більше нема</span>{% else %}{{ item.location or "місце невідоме" }}{% endif %}
   {% if item.note %}<br><span class="meta">{{ item.note }}</span>{% endif %}
 </p>
+{% if files %}{% set shown = files %}{% include "_files.html" %}{% endif %}
 <h2>Історія</h2>
 <ul>
   {% for h in history %}

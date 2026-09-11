@@ -19,6 +19,7 @@ class Settings:
     anthropic_api_key: str | None
     openai_api_key: str | None
     database_path: Path
+    files_dir: Path  # photos (later documents) that came with messages, by content hash
     admin_user_id: int | None  # Telegram id of the admin; everyone else is in the db
     web_secret: str | None  # signs web links and cookies; no passwords
     web_url: str | None
@@ -60,11 +61,13 @@ def _env_time(name: str, default: str) -> time:
 
 
 def load_settings() -> Settings:
+    database_path = Path(_env("DATABASE_PATH", "./data/family.db") or "")
     return Settings(
         telegram_token=_env("TELEGRAM_BOT_TOKEN"),
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
         openai_api_key=_env("OPENAI_API_KEY"),
-        database_path=Path(_env("DATABASE_PATH", "./data/family.db") or ""),
+        database_path=database_path,
+        files_dir=Path(_env("FILES_DIR") or database_path.parent / "files"),
         admin_user_id=_env_int("ADMIN_USER_ID"),
         web_secret=_env("WEB_SECRET"),
         web_url=_env("WEB_URL"),

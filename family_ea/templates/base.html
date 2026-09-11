@@ -52,6 +52,11 @@
           user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   .dragging { background: #f6f6f6; opacity: .7; }
   .dragging .grip { cursor: grabbing; }
+  .files { display: flex; flex-wrap: wrap; gap: .4rem; margin: .3rem 0 .1rem; }
+  .files img { display: block; height: 5.5rem; border-radius: .3rem; }
+  .docs li { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: .75rem; padding: .6rem 0; }
+  .docs img { display: block; width: 100%; border-radius: .3rem; }
+  .docs .text { white-space: pre-line; }
 </style>
 </head>
 <body>
@@ -60,6 +65,7 @@
   <a href="/"{% if path == '/' and not q %} class="current"{% endif %}>Задачі</a>
   <a href="/journal"{% if path == '/journal' %} class="current"{% endif %}>Нотатки</a>
   <a href="/items"{% if path.startswith('/items') %} class="current"{% endif %}>Речі</a>
+  <a href="/documents"{% if path.startswith('/documents') %} class="current"{% endif %}>Документи</a>
   <details class="admin">
     <summary>Адмін</summary>
     <div>

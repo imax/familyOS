@@ -63,7 +63,7 @@ def help_text(settings: Settings) -> str:
     return (
         "Пиши або наговорюй що завгодно: що сталося, що треба зробити, де що лежить. "
         "Фото теж: підпиши, що з ним зробити («додай у нотатки», «зроби з цього справу»), "
-        "і я перепишу з нього все потрібне. "
+        "і я перепишу з нього все потрібне; сам знімок лишиться на вебі, у «Документах». "
         "«На сьогодні: пошта, планка, авто» веде твій список на день; додавай і викреслюй "
         f"словами, список партнера теж видно. Питай — відповім з того, що знаю. Щоранку о "
         f"{when} надсилаю дайджест, а нагадую, коли попросиш.\n\nКоманди:\n{commands}"
@@ -294,7 +294,7 @@ def build_bot(
 
     async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """A photo with a caption: the largest size goes to the LLM as an image, the caption
-        is the message text. The file is not kept, only its Telegram id."""
+        is the message text; the pipeline keeps the file, the message its Telegram id."""
         person = member_of(update)
         assert update.message and update.message.photo and person
         await update.message.chat.send_action(ChatAction.TYPING)

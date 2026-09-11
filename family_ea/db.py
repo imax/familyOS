@@ -109,6 +109,17 @@ CREATE TABLE IF NOT EXISTS item_history (
   source_message_id INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS attachments (
+  id INTEGER PRIMARY KEY,
+  message_id INTEGER NOT NULL,      -- the message it came with; the only link to anything
+  sha256 TEXT NOT NULL,             -- content hash; the bytes are FILES_DIR/ab/ab…<ext>
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  name TEXT,                        -- the original file name when Telegram gives one
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS attachments_message ON attachments (message_id);
+
 CREATE TABLE IF NOT EXISTS facts (
   id INTEGER PRIMARY KEY,           -- every save is a new row; the latest one is current
   text TEXT NOT NULL,
@@ -177,6 +188,23 @@ class Message:
     is_voice: bool
     photo_file_id: str | None
     llm_result: str | None
+
+
+@dataclass(frozen=True)
+class Attachment:
+    """A file that came with a message; the bytes are in FILES_DIR under `sha256`."""
+
+    id: int
+    message_id: int
+    sha256: str
+    mime: str
+    size: int
+    name: str | None  # photos have none; a document keeps the name it was sent with
+    created_at: str
+
+    @property
+    def is_image(self) -> bool:
+        return self.mime.startswith("image/")
 
 
 @dataclass(frozen=True)
@@ -329,6 +357,10 @@ def _message(row: sqlite3.Row) -> Message:
 
 def _entry(row: sqlite3.Row) -> Entry:
     return Entry(**dict(row))
+
+
+def _attachment(row: sqlite3.Row) -> Attachment:
+    return Attachment(**dict(row))
 
 
 def _item(row: sqlite3.Row) -> Item:
@@ -551,6 +583,51 @@ class Database:
         if exclude_ids:
             out = [e for e in out if e.id not in exclude_ids]
         return out[:limit]
+
+    # --- attachments --------------------------------------------------------
+    # The bytes are in files.FileStore; the row says which message brought them.
+
+    def add_attachment(
+        self, message_id: int, sha256: str, mime: str, size: int, name: str | None = None
+    ) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO attachments (message_id, sha256, mime, size, name, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (message_id, sha256, mime, size, name, utc_now_iso()),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def attachment_by_sha(self, sha256: str) -> Attachment | None:
+        row = self.conn.execute(
+            "SELECT * FROM attachments WHERE sha256 = ? ORDER BY id LIMIT 1", (sha256,)
+        ).fetchone()
+        return _attachment(row) if row else None
+
+    def list_attachments(self) -> list[Attachment]:
+        """Every file, oldest first: what `pull` mirrors."""
+        rows = self.conn.execute("SELECT * FROM attachments ORDER BY id").fetchall()
+        return [_attachment(r) for r in rows]
+
+    def attachments_with_messages(
+        self, limit: int | None = None
+    ) -> list[tuple[Attachment, Message]]:
+        """Every file with the message it came with, newest first."""
+        sql = "SELECT * FROM attachments ORDER BY id DESC"
+        rows = self.conn.execute(sql + (" LIMIT ?" if limit else ""), (limit,) if limit else ())
+        files = [_attachment(r) for r in rows.fetchall()]
+        ids = {a.message_id for a in files}
+        if not ids:
+            return []
+        marks = ",".join("?" * len(ids))
+        messages = {
+            m.id: m
+            for m in map(
+                _message,
+                self.conn.execute(f"SELECT * FROM messages WHERE id IN ({marks})", tuple(ids)),
+            )
+        }
+        return [(a, messages[a.message_id]) for a in files if a.message_id in messages]
 
     # --- items --------------------------------------------------------------
     # Every change goes through here and writes item_history; callers never touch it.

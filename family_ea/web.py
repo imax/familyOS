@@ -9,6 +9,7 @@ commitments, dragged on the home page. Commitments are closed only through the L
 
 import json
 import logging
+import re
 import tempfile
 from datetime import datetime
 from itertools import groupby
@@ -17,7 +18,7 @@ from typing import Annotated
 from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from .auth import SESSION_TTL, sign, verify
@@ -35,6 +36,7 @@ from .context import (
 )
 from .db import Database, Member
 from .family import Family
+from .files import FileStore, documents, files_for
 from .ical import commitment_ics, event_ics, ics_filename
 
 log = logging.getLogger(__name__)
@@ -42,6 +44,7 @@ log = logging.getLogger(__name__)
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 SESSION_COOKIE = "session"
 DONE_SHOWN = 10  # the «Зроблено» tail of the home page
+SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 class NotLoggedIn(Exception):
@@ -55,6 +58,7 @@ class NotLoggedIn(Exception):
 
 def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    store = FileStore(settings.files_dir)
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["dt"] = lambda iso: fmt_dt(iso, settings.tz)
     templates.env.filters["date"] = fmt_date
@@ -84,6 +88,15 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
         if member is None:
             raise NotLoggedIn("Щоб увійти, напиши боту /web.", 401)
         return member
+
+    def bearer_ok(request: Request) -> bool:
+        """A `backup` token, signed by `pull` itself, sent as a bearer token."""
+        scheme, _, token = request.headers.get("authorization", "").partition(" ")
+        return scheme.lower() == "bearer" and verify(secret(), token.strip(), "backup") is not None
+
+    def backup_only(request: Request) -> None:
+        if not bearer_ok(request):
+            raise HTTPException(status_code=401, detail="unauthorized")
 
     @app.exception_handler(NotLoggedIn)
     async def not_logged_in(request: Request, exc: NotLoggedIn) -> HTMLResponse:
@@ -132,6 +145,8 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
         if q and q.strip():
             q = q.strip()
             pattern = word_pattern(q)
+            entries = db.search_entries(fts_query(q), limit=50)
+            items = db.search_items(pattern, limit=50) if pattern else []
             return templates.TemplateResponse(
                 request,
                 "search.html",
@@ -139,8 +154,10 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
                     "q": q,
                     "events": db.search_events(pattern) if pattern else [],
                     "commitments": db.search_commitments(pattern) if pattern else [],
-                    "entries": db.search_entries(fts_query(q), limit=50),
-                    "items": db.search_items(pattern, limit=50) if pattern else [],
+                    "entries": entries,
+                    "items": items,
+                    "files": files_for(db, "entry", entries),
+                    "item_files": files_for(db, "item", items),
                 },
             )
         now = datetime.now(settings.tz)
@@ -161,9 +178,12 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
 
     @app.get("/journal", response_class=HTMLResponse, dependencies=[Depends(authed)])
     async def journal(request: Request) -> HTMLResponse:
-        """What happened, by month, newest first."""
+        """What happened, by month, newest first; a note shows the photos it was made from."""
+        entries = db.list_entries(limit=200)
         return templates.TemplateResponse(
-            request, "journal.html", {"months": group_by_month(db.list_entries(limit=200))}
+            request,
+            "journal.html",
+            {"months": group_by_month(entries), "files": files_for(db, "entry", entries)},
         )
 
     @app.get("/items", response_class=HTMLResponse, dependencies=[Depends(authed)])
@@ -173,10 +193,15 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
         """Where things are: places with counts and what changed lately; `?place=` (empty:
         no place known) lists a place by spot, `?owner=` one person's things."""
         if place is None and not owner:
+            recent = db.recent_items(10)
             return templates.TemplateResponse(
                 request,
                 "items.html",
-                {"recent": db.recent_items(10), "places": db.places()},
+                {
+                    "recent": recent,
+                    "places": db.places(),
+                    "item_files": files_for(db, "item", recent),
+                },
             )
         items = db.list_items(place=place, owner=owner)
         if place is not None:
@@ -185,7 +210,11 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
         else:
             title = f"Речі: {owner}"
             groups = [(None, items)] if items else []
-        return templates.TemplateResponse(request, "place.html", {"title": title, "groups": groups})
+        return templates.TemplateResponse(
+            request,
+            "place.html",
+            {"title": title, "groups": groups, "item_files": files_for(db, "item", items)},
+        )
 
     @app.get("/items/{iid:int}", response_class=HTMLResponse, dependencies=[Depends(authed)])
     async def item_page(request: Request, iid: int) -> HTMLResponse:
@@ -193,8 +222,50 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
         if item is None:
             raise HTTPException(status_code=404, detail="no such item")
         return templates.TemplateResponse(
-            request, "item.html", {"item": item, "history": db.item_history(iid)}
+            request,
+            "item.html",
+            {
+                "item": item,
+                "history": db.item_history(iid),
+                "files": files_for(db, "item", [item]).get(iid, []),
+            },
         )
+
+    @app.get("/documents", response_class=HTMLResponse, dependencies=[Depends(authed)])
+    async def documents_page(request: Request) -> HTMLResponse:
+        """Every file that came with a message, newest first, with what was made of it. A
+        view over `attachments`; there is no documents table."""
+        return templates.TemplateResponse(request, "documents.html", {"documents": documents(db)})
+
+    @app.get("/files/{sha256}")
+    async def file(request: Request, sha256: str) -> Response:
+        """One stored file by content hash: for the pages (session cookie) and for `pull`
+        (bearer token). The content never changes, so the browser may keep it for a year."""
+        secret()
+        if member_from_cookie(request) is None and not bearer_ok(request):
+            raise NotLoggedIn("Щоб увійти, напиши боту /web.", 401)
+        a = db.attachment_by_sha(sha256) if SHA256.fullmatch(sha256) else None
+        if a is None or not store.has(a.sha256, a.mime):
+            raise HTTPException(status_code=404, detail="no such file")
+        return FileResponse(
+            store.path(a.sha256, a.mime),
+            media_type=a.mime,
+            headers={"Cache-Control": "private, max-age=31536000, immutable"},
+        )
+
+    @app.get("/files.json", dependencies=[Depends(backup_only)])
+    async def files_index() -> list[dict]:
+        """What `pull` mirrors: every stored file's hash, type and size."""
+        return [
+            {
+                "sha256": a.sha256,
+                "mime": a.mime,
+                "size": a.size,
+                "message_id": a.message_id,
+                "created_at": a.created_at,
+            }
+            for a in db.list_attachments()
+        ]
 
     def ics_response(data: bytes, text: str) -> Response:
         """Open the file and the phone calendar offers to add the event."""
@@ -289,14 +360,10 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
             request, "messages.html", {"messages": db.list_messages(limit=200)}
         )
 
-    @app.get("/backup.db")
-    async def backup(request: Request) -> Response:
+    @app.get("/backup.db", dependencies=[Depends(backup_only)])
+    async def backup() -> Response:
         """The whole database as one consistent file; `python -m family_ea pull` fetches it
         with a `backup` token it signs itself, sent as a bearer token."""
-        key = secret()
-        scheme, _, token = request.headers.get("authorization", "").partition(" ")
-        if scheme.lower() != "bearer" or verify(key, token.strip(), "backup") is None:
-            raise HTTPException(status_code=401, detail="unauthorized")
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "family.db"
             db.backup_to(path)

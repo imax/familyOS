@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from .context import build_context
 from .db import Database, Member
 from .family import Family
+from .files import FileStore
 from .llm import Image, LlmResult, Understander
 from .ops import Applied, apply_ops
 
@@ -30,11 +31,19 @@ class Outcome:
 
 
 class Pipeline:
-    def __init__(self, db: Database, family: Family, llm: Understander, tz: ZoneInfo) -> None:
+    def __init__(
+        self,
+        db: Database,
+        family: Family,
+        llm: Understander,
+        tz: ZoneInfo,
+        store: FileStore | None = None,
+    ) -> None:
         self.db = db
         self.family = family
         self.llm = llm
         self.tz = tz
+        self.store = store  # None: a photo is read but not kept (tests)
 
     async def handle(
         self,
@@ -46,8 +55,9 @@ class Pipeline:
         photo_file_id: str | None = None,
         tg_message_id: int | None = None,
     ) -> Outcome:
-        """`photo` goes to the LLM with this one call and is then dropped; only its Telegram
-        `photo_file_id` stays on the message."""
+        """`photo` goes to the LLM with this one call; its bytes go to the file store as an
+        attachment of the message (before the LLM call, so a failed call loses nothing) and
+        its Telegram `photo_file_id` stays on the message."""
         message_id = self.db.insert_message(
             author.id,
             author.id,
@@ -56,6 +66,9 @@ class Pipeline:
             photo_file_id=photo_file_id,
             tg_message_id=tg_message_id,
         )
+        if photo is not None and self.store is not None:
+            sha = self.store.put(photo.data, photo.media_type)
+            self.db.add_attachment(message_id, sha, photo.media_type, len(photo.data))
         now = datetime.now(self.tz)
         context = build_context(
             self.db, self.family, now, author, text, with_photo=photo is not None

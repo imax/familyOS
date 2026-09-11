@@ -1,7 +1,9 @@
 import json
+from pathlib import Path
 
 from family_ea.db import Database
 from family_ea.family import Family, Member
+from family_ea.files import FileStore, files_for
 from family_ea.llm import Image, LlmCall, LlmError, LlmResult
 from family_ea.pipeline import ERROR_REPLY, Pipeline
 from tests.conftest import KYIV
@@ -57,7 +59,38 @@ async def test_pipeline_llm_failure_keeps_message(
     assert db.get_message(outcome.bot_message_id).raw_text == ERROR_REPLY
 
 
-async def test_pipeline_sends_the_photo_and_keeps_only_its_id(
+async def test_pipeline_keeps_the_photo_as_an_attachment(
+    db: Database, family: Family, oleh: Member, tmp_path: Path
+) -> None:
+    llm = FakeLlm(
+        LlmResult.model_validate(
+            {"reply": "Записав.", "journal": [{"op": "create", "text": "Чек: 1 200 грн"}]}
+        )
+    )
+    store = FileStore(tmp_path / "files")
+    outcome = await Pipeline(db, family, llm, KYIV, store=store).handle(
+        oleh, "додай у нотатки", photo=Image(b"jpeg-bytes", "image/jpeg"), photo_file_id="tg-1"
+    )
+    [(a, m)] = db.attachments_with_messages()
+    assert m.id == outcome.message_id and m.photo_file_id == "tg-1"
+    assert (a.mime, a.size, a.name) == ("image/jpeg", 10, None)
+    assert store.path(a.sha256, a.mime).read_bytes() == b"jpeg-bytes"
+    [entry] = db.list_entries()
+    assert [x.id for x in files_for(db, "entry", [entry])[entry.id]] == [a.id]
+
+    # the file is stored before the model is called: a failed call loses nothing
+    failed = await Pipeline(db, family, FakeLlm(None), KYIV, store=store).handle(
+        oleh, "", photo=Image(b"png-bytes", "image/png")
+    )
+    assert failed.error and len(db.list_attachments()) == 2
+    assert db.list_attachments()[1].message_id == failed.message_id
+
+    # no store (tests): the photo is read, not kept
+    await Pipeline(db, family, llm, KYIV).handle(oleh, "x", photo=Image(b"gone", "image/jpeg"))
+    assert len(db.list_attachments()) == 2
+
+
+async def test_pipeline_sends_the_photo_and_keeps_its_id(
     db: Database, family: Family, oleh: Member
 ) -> None:
     llm = FakeLlm(

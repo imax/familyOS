@@ -7,6 +7,7 @@ primary_region = "fra"
 # ADMIN_USER_ID, API tokens and web auth are set with `fly secrets set`, not here.
 [env]
   DATABASE_PATH = "/data/family.db"
+  FILES_DIR = "/data/files"
   TZ = "Europe/Kyiv"
 
 [[mounts]]

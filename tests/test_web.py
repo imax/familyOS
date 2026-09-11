@@ -1,14 +1,20 @@
+import json
+import tempfile
 from datetime import UTC, datetime, time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from family_ea.auth import LINK_TTL, SESSION_TTL, sign
+from family_ea.auth import BACKUP_TTL, LINK_TTL, SESSION_TTL, sign
 from family_ea.config import Settings
 from family_ea.db import Database, Member
 from family_ea.family import Family
+from family_ea.files import FileStore
 from family_ea.web import build_web
 from tests.conftest import KYIV
+
+JPEG = b"\xff\xd8\xff\xe0not-really-a-jpeg"
 
 
 def _settings(**kw) -> Settings:
@@ -17,6 +23,7 @@ def _settings(**kw) -> Settings:
         anthropic_api_key=None,
         openai_api_key=None,
         database_path=":memory:",
+        files_dir=Path(tempfile.mkdtemp(prefix="family-ea-files-")),
         admin_user_id=1,
         web_secret="s",
         web_url=None,
@@ -98,6 +105,7 @@ def test_web_pages(db: Database, family: Family) -> None:
     assert "Газовик" in client.get("/journal", headers=_auth()).text
     assert ">Задачі</a>" in home.text and 'class="current">Задачі' in home.text
     assert ">Нотатки</a>" in home.text and ">Користувачі</a>" in home.text
+    assert ">Документи</a>" in home.text
     assert "/memories" not in home.text  # the tab is Нотатки now
     items = client.get("/items", headers=_auth())
     assert items.status_code == 200 and 'class="current">Речі' in items.text
@@ -124,6 +132,72 @@ def test_web_pages(db: Database, family: Family) -> None:
 
     messages = client.get("/messages", headers=_auth())
     assert "бот → Олег" in messages.text and "Записав." in messages.text
+    docs = client.get("/documents", headers=_auth())
+    assert docs.status_code == 200 and "поки порожньо" in docs.text
+
+
+def test_web_files_and_documents(db: Database, family: Family, tmp_path: Path) -> None:
+    settings = _settings(files_dir=tmp_path / "files")
+    sha = FileStore(settings.files_dir).put(JPEG, "image/jpeg")
+    mid = db.insert_message("oleh", "oleh", "додай у нотатки", photo_file_id="f")
+    db.add_attachment(mid, sha, "image/jpeg", len(JPEG))
+    eid = db.create_entry("ТО авто: 4 500 грн", "2026-09-11", "oleh", mid)
+    iid = db.create_item(
+        "Сервісна книжка",
+        owner=None,
+        place="авто",
+        spot="бардачок",
+        note=None,
+        created_by="oleh",
+        source_message_id=mid,
+    )
+    applied = [
+        {"kind": "entry", "op": "create", "id": eid, "ok": True},
+        {"kind": "item", "op": "create", "id": iid, "ok": True},
+    ]
+    db.set_llm_result(mid, json.dumps({"applied": applied}))
+    lost = db.insert_message("anna", "anna", "", photo_file_id="g")
+    db.add_attachment(lost, "0" * 64, "image/jpeg", 1)  # a row whose bytes are not on disk
+    client = TestClient(build_web(settings, family, db))
+
+    # the file itself: for a logged-in browser, cached for good; for pull, with its token
+    r = client.get(f"/files/{sha}", headers=_auth())
+    assert r.status_code == 200 and r.content == JPEG
+    assert r.headers["content-type"] == "image/jpeg"
+    assert r.headers["cache-control"] == "private, max-age=31536000, immutable"
+    assert client.get(f"/files/{sha}").status_code == 401
+    assert client.get("/files/" + "1" * 64, headers=_auth()).status_code == 404
+    assert client.get("/files/" + "0" * 64, headers=_auth()).status_code == 404
+    assert client.get("/files/not-a-hash", headers=_auth()).status_code == 404
+    bearer = {"Authorization": "Bearer " + sign("s", "backup", "cli", BACKUP_TTL)}
+    assert client.get(f"/files/{sha}", headers=bearer).content == JPEG
+    index = client.get("/files.json", headers=bearer)
+    assert index.status_code == 200
+    assert [(f["sha256"], f["mime"], f["size"]) for f in index.json()] == [
+        (sha, "image/jpeg", len(JPEG)),
+        ("0" * 64, "image/jpeg", 1),
+    ]
+    assert client.get("/files.json", headers=_auth()).status_code == 401  # a cookie is not enough
+    assert client.get("/files.json").status_code == 401
+
+    # under the note (one line: the li is pre-line), on the item page, a mark in item rows
+    journal = client.get("/journal", headers=_auth()).text
+    thumb = f'ТО авто: 4 500 грн<div class="files"><a href="/files/{sha}"><img src="/files/{sha}"'
+    assert thumb in journal
+    item = client.get(f"/items/{iid}", headers=_auth()).text
+    assert f'<img src="/files/{sha}"' in item and "бардачок" in item
+    assert "📎" in client.get("/items", headers=_auth()).text
+    assert "📎" in client.get("/items", params={"place": "авто"}, headers=_auth()).text
+    search = client.get("/", params={"q": "авто"}, headers=_auth()).text
+    assert f'<img src="/files/{sha}"' in search and "📎" in search
+
+    # the Документи tab: every file, newest first, with the caption and what was made of it
+    docs = client.get("/documents", headers=_auth())
+    assert docs.status_code == 200 and 'class="current">Документи' in docs.text
+    assert docs.text.index("0" * 64) < docs.text.index(sha)
+    assert "ТО авто: 4 500 грн" in docs.text and "Сервісна книжка" in docs.text
+    assert "«додай у нотатки»" in docs.text and "без запису" in docs.text
+    assert client.get("/documents").status_code == 401
 
 
 def test_web_refuses_without_configured_auth(db: Database, family: Family) -> None:
