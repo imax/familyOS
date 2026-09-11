@@ -335,23 +335,14 @@ def digest_text(
     family: Family,
     tz: ZoneInfo,
     *,
-    include_open: bool,
-    max_open: int = 5,
     today: list[str] | None = None,
 ) -> str | None:
-    """The morning push: the boards (`today`, from today_lines, the recipient's own first),
-    today's and tomorrow's events, today's and overdue commitments, plus undated ones when
-    `include_open`. None when there is nothing to say: an empty morning stays silent.
-    Deterministic on purpose: presentation, not understanding."""
+    """The morning push, and /today: the boards (`today`, from today_lines, the recipient's
+    own first), today's and tomorrow's events, today's and overdue commitments. Never the
+    undated ones: they live on the web. None when there is nothing to say: an empty morning
+    stays silent. Deterministic on purpose: presentation, not understanding."""
     lines = _digest_lines(
-        a,
-        b,
-        family,
-        tz,
-        with_ids=False,
-        include_open=include_open,
-        max_open=max_open,
-        today=today or [],
+        a, b, family, tz, with_ids=False, include_open=False, max_open=0, today=today or []
     )
     if not lines:
         return None

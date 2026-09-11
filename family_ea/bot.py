@@ -48,7 +48,6 @@ log = logging.getLogger(__name__)
 
 TG_MAX_LEN = 4000
 PRIVATE_BOT = "Це приватний сімейний бот."
-OPEN_ITEMS_WEEKDAY = 0  # Monday: the one morning the digest also lists undated items
 REMINDER_INTERVAL = 60  # seconds between checks for due reminders
 REMINDER_MAX_LATE = timedelta(hours=3)  # due longer ago than this (downtime): missed, not sent
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)  # login links in text: no preview fetch
@@ -220,9 +219,7 @@ def build_bot(
         )
         db.set_tg_message_id(outcome.bot_message_id, sent.message_id)
 
-    def digest(
-        now: datetime, viewer: Member, *, include_open: bool
-    ) -> tuple[str, list[Event | Commitment]] | None:
+    def digest(now: datetime, viewer: Member) -> tuple[str, list[Event | Commitment]] | None:
         """The digest for one member (their own board first) and the items it lists."""
         agenda = build_agenda(db.planned_events(), now)
         buckets = bucket_commitments(db.open_commitments(), now)
@@ -232,7 +229,6 @@ def build_bot(
             buckets,
             family,
             settings.tz,
-            include_open=include_open,
             today=today_lines(boards, viewer.id),
         )
         if text is None:
@@ -244,11 +240,10 @@ def build_bot(
     async def send_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
         """The morning job: each member's digest; silence when there is nothing to say."""
         now = datetime.now(settings.tz)
-        include_open = now.weekday() == OPEN_ITEMS_WEEKDAY
         for member in family.members:
             if member.telegram_id is None:
                 continue
-            result = digest(now, member, include_open=include_open)
+            result = digest(now, member)
             if result is None:
                 log.info("digest: nothing to say to %s today", member.id)
                 continue
@@ -276,10 +271,10 @@ def build_bot(
         await deliver_due_reminders(db, family, datetime.now(UTC), send)
 
     async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """The digest now, without the undated commitments: those live on the web."""
+        """The morning digest, now."""
         person = member_of(update)
         assert update.message and person
-        result = digest(datetime.now(settings.tz), person, include_open=False)
+        result = digest(datetime.now(settings.tz), person)
         if result is None:
             await update.message.reply_text("Нічого не висить.")
             return

@@ -110,15 +110,13 @@ def test_digest_with_events(family: Family) -> None:
         [_c(1, text="Забрати форму", owner="anna", due_from="2026-09-10", due_to="2026-09-10")],
         NOW,
     )
-    assert digest_text(a, b, family, KYIV, include_open=False) == (
+    assert digest_text(a, b, family, KYIV) == (
         "Сьогодні:\n- 10:00–11:00 Сніданок з командою (Олег)\n"
         "Завтра:\n- 15:30 Стоматолог (Анна)\n"
         "Справи на сьогодні:\n- Забрати форму (Анна, 10.09)\n\n"
         "Нічого не забули?"
     )
-    assert (
-        digest_text(Agenda(), bucket_commitments([], NOW), family, KYIV, include_open=True) is None
-    )
+    assert digest_text(Agenda(), bucket_commitments([], NOW), family, KYIV) is None
 
 
 def test_event_ops(db: Database, family: Family) -> None:

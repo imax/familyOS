@@ -95,21 +95,17 @@ def test_digest_text(family: Family) -> None:
         _c(3, text="Купити лампочки"),
     ]
     b = bucket_commitments(items, now)
-    assert digest_text(Agenda(), b, family, KYIV, include_open=False) == (
+    text = digest_text(Agenda(), b, family, KYIV)
+    assert text == (
         "Справи на сьогодні:\n- Стоматолог (Анна, 10.09 15:30)\n"
         "Прострочено:\n- Поговорити з Марією (09.09)\n\n"
         "Нічого не забули?"
     )
-    with_open = digest_text(Agenda(), b, family, KYIV, include_open=True)
-    assert with_open and "Без дати:\n- Купити лампочки" in with_open
-    assert "[#" not in with_open  # the push has no ids
+    assert "Купити лампочки" not in text and "[#" not in text  # no undated ones, no ids
 
     only_undated = bucket_commitments([_c(3)], now)
-    assert digest_text(Agenda(), only_undated, family, KYIV, include_open=False) is None
-    assert digest_text(Agenda(), only_undated, family, KYIV, include_open=True)
-    assert (
-        digest_text(Agenda(), bucket_commitments([], now), family, KYIV, include_open=True) is None
-    )
+    assert digest_text(Agenda(), only_undated, family, KYIV) is None  # nothing to say
+    assert digest_text(Agenda(), bucket_commitments([], now), family, KYIV) is None
 
 
 def test_today_blocks_and_lines(family: Family) -> None:
@@ -137,10 +133,10 @@ def test_today_blocks_and_lines(family: Family) -> None:
 
     head = today_lines(blocks, "anna")[:2]
     nothing = bucket_commitments([], now)
-    assert digest_text(Agenda(), nothing, family, KYIV, include_open=False, today=head) == (
+    assert digest_text(Agenda(), nothing, family, KYIV, today=head) == (
         "На сьогодні (твоє):\n- вода\n\nНічого не забули?"
     )
-    assert digest_text(Agenda(), nothing, family, KYIV, include_open=False, today=[]) is None
+    assert digest_text(Agenda(), nothing, family, KYIV, today=[]) is None
 
 
 def test_context_shows_today_boards(

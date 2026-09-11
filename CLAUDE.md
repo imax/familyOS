@@ -91,9 +91,9 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   `db.reorder_commitments`); the LLM never sets it, and `open_commitments()` returns that
   order so the timeline, the digest and the LLM context agree.
 - **Every push is deterministic and stored.** The morning digest renders each member's
-  board (own first), today's and tomorrow's events, then commitments due today and overdue
-  (undated ones only on Mondays), no LLM call, and is silent when empty; `/today` is the
-  same without the undated ones. A reminder is text the LLM wrote at request time,
+  board (own first), today's and tomorrow's events, then commitments due today and overdue,
+  never the undated ones (they are on the web), no LLM call, and is silent when empty;
+  `/today` is the same digest now. A reminder is text the LLM wrote at request time,
   sent by a per-minute job when `at` comes, to the one member it is for or to everyone.
   Both are stored as bot messages in each recipient's chat so replies to them have
   context. Anything else the bot sends on its own must follow the same two rules.
