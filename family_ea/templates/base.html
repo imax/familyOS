@@ -60,6 +60,12 @@
   .docs .caption { white-space: pre-line; }
   .clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
   .clamp.open { display: block; }
+  .fold { cursor: pointer; }
+  .fold .ellipsis { color: #999; }
+  .fold .tail { display: none; color: #555; white-space: pre-line; }
+  .fold.open .tail { display: block; }
+  .fold.open .ellipsis { display: none; }
+  .commitment .fold.open .tail, .reminder .fold.open .tail { margin-left: 1.25rem; }
   dialog.lightbox { border: 0; padding: 0; background: transparent; max-width: 96vw; max-height: 96vh; }
   dialog.lightbox::backdrop { background: rgba(0, 0, 0, .85); }
   dialog.lightbox img { display: block; max-width: 96vw; max-height: 96vh; cursor: zoom-out; }
@@ -98,10 +104,11 @@
     box.addEventListener('click', function () { box.close(); });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && box.open) box.close(); });
     box.addEventListener('close', function () { img.removeAttribute('src'); });
-    // Long texts are clamped to two lines; a click on one unfolds it, the next folds it back.
+    // Long texts are clamped to two lines (.clamp) or folded to their head (.fold, the
+    // timeline); a click on one unfolds it, the next folds it back.
     document.addEventListener('click', function (e) {
       if (e.target.closest('a')) return;
-      var t = e.target.closest('.clamp');
+      var t = e.target.closest('.clamp, .fold');
       if (t) t.classList.toggle('open');
     });
   })();

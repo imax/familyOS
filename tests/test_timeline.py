@@ -6,7 +6,7 @@ from datetime import date, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from family_ea.context import build_timeline, day_title
+from family_ea.context import build_timeline, day_title, split_long
 from family_ea.db import Database, Reminder
 from family_ea.family import Family
 from family_ea.web import build_web
@@ -16,6 +16,14 @@ from tests.test_events import _e
 from tests.test_web import _auth, _settings, freeze_web_clock
 
 NOW = datetime(2026, 9, 10, 15, 0, tzinfo=KYIV)  # Thursday afternoon
+LONG = (
+    "Пройти тренінг від котиків по домедичній підготовці (зупинка кровотеч, турнікет) з "
+    "Ванею/Сашею. Дати рухаються, треба подзвонити, щоб дізнатись."
+)
+LONG_HEAD = "Пройти тренінг від котиків по домедичній підготовці"
+LONG_REST = (
+    "(зупинка кровотеч, турнікет) з Ванею/Сашею. Дати рухаються, треба подзвонити, щоб дізнатись."
+)
 
 
 def _r(id: int, **kw) -> Reminder:
@@ -64,6 +72,7 @@ def test_build_timeline(family: Family) -> None:
         _c(5, text="Майбутнє вікно", due_from="2026-09-12", due_to="2026-09-14"),
         _c(6, text="Без дати", owner="oleh"),
         _c(7, text="Закрите", status="done"),
+        _c(8, text=LONG),  # undated, long: the head shows, the rest folds
     ]
     reminders = [
         _r(1, text="Квіти о 9", who="anna", at="2026-09-11T05:00:00Z"),  # tomorrow 08:00
@@ -99,7 +108,26 @@ def test_build_timeline(family: Family) -> None:
     assert tomorrow.rows[2].ics_url == "/events/1.ics"
     assert [(r.id, r.note) for r in saturday.rows] == [(4, ""), (5, "до 14.09")]
     assert [(r.kind, r.id, r.time) for r in october.rows] == [("event", 5, "15:30")]
-    assert [(r.id, r.who, r.ics_url) for r in t.undated] == [(6, "Олег", None)]
+    assert [(r.id, r.who, r.ics_url) for r in t.undated] == [(6, "Олег", None), (8, "", None)]
+    assert (t.undated[1].text, t.undated[1].more) == (LONG_HEAD, LONG_REST)
+    assert t.undated[0].more == ""
+
+
+def test_split_long() -> None:
+    assert split_long("Купити лампочки") == ("Купити лампочки", "")
+    assert split_long(LONG) == (LONG_HEAD, LONG_REST)
+    two = "Віддати Маші і Ваню чай, коли побачу їх. Чай лежить на Андрющенка біля дверей, у пакеті."
+    assert split_long(two) == (
+        "Віддати Маші і Ваню чай, коли побачу їх",
+        "Чай лежить на Андрющенка біля дверей, у пакеті.",
+    )
+    early = "Ок. Попросити Макса Коваля сходити в Козак авто, дізнатись схему купівлі авто в лізинг"
+    assert split_long(early) == (  # a sentence end too early: the comma wins
+        "Ок. Попросити Макса Коваля сходити в Козак авто",
+        "дізнатись схему купівлі авто в лізинг",
+    )
+    solid = "x" * 100
+    assert split_long(solid) == ("x" * 70, "x" * 30)
 
 
 def test_empty_timeline_keeps_today(family: Family) -> None:
@@ -134,6 +162,7 @@ def test_web_home_is_a_timeline(
     db.create_commitment(
         "Подзвонити газовику Петру", owner=None, created_by="oleh", source_message_id=mid
     )
+    db.create_commitment(LONG, owner="oleh", created_by="oleh", source_message_id=mid)
     db.create_entry("Газовик Петро", "2026-09-10", "oleh", mid)
     db.create_event(
         "Буріння", who=None, created_by="oleh", source_message_id=mid, date_from="2026-09-15"
@@ -156,6 +185,11 @@ def test_web_home_is_a_timeline(
     assert home.index("<h2>Без дати</h2>") < home.index("☐</span>Подзвонити газовику Петру")
     assert "Газовик" not in home  # notes have their own page
     assert 'class="id"' not in home  # database ids are not for people
+    start = home.index('<span class="fold">')
+    folded = home[start : home.index("</li>", start)]
+    assert f'☐</span>{LONG_HEAD}<span class="ellipsis">…</span>' in folded
+    assert f'<span class="tail">{LONG_REST}</span>' in folded and "· Олег" in folded
+    assert home.count('class="fold"') == 1  # the short rows are plain
     tail = home[home.index("<h2>Зроблено</h2>") :]  # the last done ones, at the very bottom
     assert home.index("<h2>Без дати</h2>") < home.index("<h2>Зроблено</h2>")
     assert "✓</span>Замовити воду" in tail and "· Анна ·" in tail
