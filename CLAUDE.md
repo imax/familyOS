@@ -18,6 +18,7 @@ uv sync                                   # install (creates .venv)
 uv run python -m family_ea                # run bot + web in one process
 uv run python -m family_ea chat --as oleh --name Олег   # the pipeline as a REPL, no Telegram
 uv run python -m family_ea pull           # production db snapshot -> data/prod.db
+uv run python -m family_ea backup --db data/prod.db   # zip: db snapshot + notes.md -> data/backups/
 uv run python -m family_ea log --db data/prod.db --last 50   # messages + what the LLM did
 uv run pytest                             # tests
 uv run ruff check . && uv run ruff format .
@@ -48,6 +49,7 @@ family_ea/
   pipeline.py   store -> context -> LLM -> ops -> reply
   transcribe.py OpenAI gpt-4o-transcribe via httpx
   ical.py       an event or dated commitment -> .ics bytes (timed or all-day)
+  backup.py     the backup archive: a checked db snapshot + the notes as one Markdown, zipped
   bot.py        python-telegram-bot handlers (/start /help /today /debug /facts /web, text,
                 voice), the 08:30 digest job, the per-minute reminder job, «Відкрити» (a
                 login link) under the digest, /today and /web
@@ -57,7 +59,7 @@ family_ea/
                 /facts, GET/POST /family, GET /messages, GET /events/:id.ics,
                 GET /commitments/:id.ics, POST /commitments/order (the undated list after
                 a drag), GET /backup.db (bearer token)
-  main.py       serve() runs bot + uvicorn in one loop; chat() REPL; pull(); show_log()
+  main.py       serve() runs bot + uvicorn in one loop; chat() REPL; pull(); backup(); show_log()
 tests/          deterministic; the LLM is faked, nothing hits the network
 ```
 

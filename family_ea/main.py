@@ -12,6 +12,7 @@ import httpx
 import uvicorn
 
 from .auth import BACKUP_TTL, sign
+from .backup import write_archive
 from .bot import build_bot
 from .config import Settings
 from .context import fmt_dt
@@ -170,6 +171,18 @@ def llm_result_lines(raw: str) -> list[str]:
         note = a.get("note") or ""
         lines.append(f"[{flag}] {a.get('kind')} {a.get('op')} #{a.get('id')} {note}".rstrip())
     return lines
+
+
+def backup(settings: Settings, db_path: Path, dest_dir: Path) -> Path:
+    """Write `family-YYYY-MM-DD.zip` (a database snapshot plus the notes as `notes.md`) to
+    `dest_dir`. Works on any database file, e.g. the one `pull` just fetched."""
+    db = Database(db_path)
+    try:
+        path = write_archive(db, Family(db, settings.admin_user_id), settings.tz, dest_dir)
+    finally:
+        db.close()
+    print(f"{path.stat().st_size} bytes -> {path}")
+    return path
 
 
 def show_log(settings: Settings, db_path: Path, last: int) -> None:

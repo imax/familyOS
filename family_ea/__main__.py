@@ -1,7 +1,8 @@
 """CLI.
 
 `python -m family_ea [serve]` runs bot + web; `chat --as oleh` is a REPL; `pull` downloads
-a snapshot of the deployed database; `log` prints messages with what the LLM did.
+a snapshot of the deployed database; `backup` zips a snapshot with the notes as Markdown;
+`log` prints messages with what the LLM did.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import asyncio
 from pathlib import Path
 
 from .config import load_settings
-from .main import chat, pull, serve, setup_logging, show_log
+from .main import backup, chat, pull, serve, setup_logging, show_log
 
 
 def main() -> None:
@@ -26,6 +27,11 @@ def main() -> None:
     pull_parser.add_argument(
         "--to", type=Path, default=Path("data/prod.db"), help="where to save it"
     )
+    backup_parser = sub.add_parser("backup", help="zip a database snapshot and the notes as .md")
+    backup_parser.add_argument("--db", type=Path, help="database file (default: DATABASE_PATH)")
+    backup_parser.add_argument(
+        "--to", type=Path, default=Path("data/backups"), help="directory for the archive"
+    )
     log_parser = sub.add_parser("log", help="print messages with what the LLM did")
     log_parser.add_argument("--db", type=Path, help="database file (default: DATABASE_PATH)")
     log_parser.add_argument("--last", type=int, default=50, help="how many messages")
@@ -37,6 +43,8 @@ def main() -> None:
         asyncio.run(chat(settings, args.as_user, args.name))
     elif args.command == "pull":
         pull(settings, args.to, args.url)
+    elif args.command == "backup":
+        backup(settings, args.db or settings.database_path, args.to)
     elif args.command == "log":
         show_log(settings, args.db or settings.database_path, args.last)
     else:
