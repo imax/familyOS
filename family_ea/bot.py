@@ -9,24 +9,9 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
-from telegram import (
-    BotCommand,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    InputFile,
-    LinkPreviewOptions,
-    Message,
-    Update,
-)
+from telegram import BotCommand, LinkPreviewOptions, Message, Update
 from telegram.constants import ChatAction, ParseMode
-from telegram.ext import (
-    Application,
-    CallbackQueryHandler,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from .auth import LINK_TTL, sign
 from .config import Settings
@@ -38,9 +23,8 @@ from .context import (
     today_blocks,
     today_lines,
 )
-from .db import Commitment, Database, Event, Member, Reminder
+from .db import Database, Member, Reminder
 from .family import Family
-from .ical import commitment_ics, event_ics, ics_filename
 from .pipeline import Pipeline
 from .transcribe import Transcriber
 
@@ -50,7 +34,8 @@ TG_MAX_LEN = 4000
 PRIVATE_BOT = "Це приватний сімейний бот."
 REMINDER_INTERVAL = 60  # seconds between checks for due reminders
 REMINDER_MAX_LATE = timedelta(hours=3)  # due longer ago than this (downtime): missed, not sent
-NO_PREVIEW = LinkPreviewOptions(is_disabled=True)  # login links in text: no preview fetch
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)  # login links in text: no preview fetch,
+# and no Telegram server opening a link meant for a person
 COMMANDS = [
     BotCommand("today", "на сьогодні: списки, події, справи, прострочене"),
     BotCommand("web", "відкрити веб-сторінку сім'ї"),
@@ -77,42 +62,18 @@ def help_text(settings: Settings) -> str:
 
 
 def login_link(settings: Settings, member: Member, path: str = "/") -> str | None:
-    """A link that logs `member` into the web view and opens `path`; None when the web is
-    not configured. Valid for LINK_TTL, then the person asks for a new one with /web."""
+    """A short link that logs `member` into the web view and opens `path`; None when the web
+    is not configured. Valid for LINK_TTL, then the person asks for a new one with /web."""
     if not settings.web_url or not settings.web_secret:
         return None
-    query = {"t": sign(settings.web_secret, "link", member.id, LINK_TTL)}
-    if path != "/":
-        query["next"] = path
-    return f"{settings.web_url.rstrip('/')}/login?{urlencode(query)}"
+    token = sign(settings.web_secret, "link", member.id, LINK_TTL)
+    link = f"{settings.web_url.rstrip('/')}/l/{token}"
+    return link if path == "/" else f"{link}?{urlencode({'next': path})}"
 
 
-def ics_rows(items: list[Event | Commitment]) -> list[list[InlineKeyboardButton]]:
-    """One «📅 …» button per event or dated commitment; tapping it sends an .ics file."""
-    rows = []
-    for item in items:
-        if isinstance(item, Event):
-            data = f"ics:e:{item.id}"
-        elif item.has_due:
-            data = f"ics:c:{item.id}"
-        else:
-            continue
-        rows.append([InlineKeyboardButton(f"📅 {item.text[:40]}", callback_data=data)])
-    return rows
-
-
-def ics_keyboard(items: list[Event | Commitment]) -> InlineKeyboardMarkup | None:
-    rows = ics_rows(items)
-    return InlineKeyboardMarkup(rows) if rows else None
-
-
-def digest_keyboard(
-    items: list[Event | Commitment], web: str | None
-) -> InlineKeyboardMarkup | None:
-    """«Відкрити» the web view on top, then «📅» per dated item."""
-    rows = [[InlineKeyboardButton("Відкрити", url=web)]] if web else []
-    rows += ics_rows(items)
-    return InlineKeyboardMarkup(rows) if rows else None
+def with_link(text: str, link: str | None) -> str:
+    """The web link on its own line at the end; the digest, /today and /web end this way."""
+    return f"{text}\n\n{link}" if link else text
 
 
 def reminder_recipients(r: Reminder, family: Family) -> list[Member]:
@@ -203,60 +164,40 @@ def build_bot(
         outcome = await pipeline.handle(
             person, text, is_voice=is_voice, tg_message_id=update.message.message_id
         )
-        touched: list[Event | Commitment] = []
-        for a in outcome.applied:
-            if not (a.ok and a.id and a.op in ("create", "update")):
-                continue
-            item: Event | Commitment | None = None
-            if a.kind == "event":
-                item = db.get_event(a.id)
-            elif a.kind == "commitment":
-                item = db.get_commitment(a.id)
-            if item is not None:
-                touched.append(item)
-        sent = await update.message.reply_text(
-            _clip(outcome.reply), reply_markup=ics_keyboard(touched)
-        )
+        sent = await update.message.reply_text(_clip(outcome.reply))
         db.set_tg_message_id(outcome.bot_message_id, sent.message_id)
 
-    def digest(now: datetime, viewer: Member) -> tuple[str, list[Event | Commitment]] | None:
-        """The digest for one member (their own board first) and the items it lists."""
+    def digest(now: datetime, viewer: Member) -> str | None:
+        """The digest for one member, their own board first; None when there is nothing to say."""
         agenda = build_agenda(db.planned_events(), now)
         buckets = bucket_commitments(db.open_commitments(), now)
         boards = today_blocks(db.current_today_lists(), family, viewer.id, now)
-        text = digest_text(
-            agenda,
-            buckets,
-            family,
-            settings.tz,
-            today=today_lines(boards, viewer.id),
-        )
-        if text is None:
-            return None
-        items: list[Event | Commitment] = [*agenda.today, *agenda.tomorrow]
-        items += [*buckets.today, *buckets.overdue]
-        return _clip(text), items
+        head = today_lines(boards, viewer.id)
+        text = digest_text(agenda, buckets, family, settings.tz, today=head)
+        return _clip(text) if text else None
 
     async def send_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
-        """The morning job: each member's digest; silence when there is nothing to say."""
+        """The morning job: each member's digest with the web link at the end; silence when
+        there is nothing to say."""
         now = datetime.now(settings.tz)
         for member in family.members:
             if member.telegram_id is None:
                 continue
-            result = digest(now, member)
-            if result is None:
+            text = digest(now, member)
+            if text is None:
                 log.info("digest: nothing to say to %s today", member.id)
                 continue
-            text, items = result
-            keyboard = digest_keyboard(items, login_link(settings, member))
             try:
                 sent = await context.bot.send_message(
-                    member.telegram_id, text, reply_markup=keyboard
+                    member.telegram_id,
+                    with_link(text, login_link(settings, member)),
+                    link_preview_options=NO_PREVIEW,
                 )
             except Exception:
                 log.warning("digest: could not message %s", member.id, exc_info=True)
                 continue
-            # Stored like any bot reply, so the LLM sees what the push said when they answer.
+            # Stored like any bot reply (without the link), so the LLM sees what the push
+            # said when they answer.
             mid = db.insert_message("bot", member.id, text)
             db.set_tg_message_id(mid, sent.message_id)
 
@@ -271,44 +212,21 @@ def build_bot(
         await deliver_due_reminders(db, family, datetime.now(UTC), send)
 
     async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """The morning digest, now."""
+        """The morning digest, now, with the web link at the end."""
         person = member_of(update)
         assert update.message and person
-        result = digest(datetime.now(settings.tz), person)
-        if result is None:
-            await update.message.reply_text("Нічого не висить.")
+        link = login_link(settings, person)
+        text = digest(datetime.now(settings.tz), person)
+        if text is None:
+            await update.message.reply_text(
+                with_link("Нічого не висить.", link), link_preview_options=NO_PREVIEW
+            )
             return
-        text, items = result
-        keyboard = digest_keyboard(items, login_link(settings, person))
-        sent = await update.message.reply_text(text, reply_markup=keyboard)
+        sent = await update.message.reply_text(
+            with_link(text, link), link_preview_options=NO_PREVIEW
+        )
         mid = db.insert_message("bot", person.id, text)
         db.set_tg_message_id(mid, sent.message_id)
-
-    async def on_ics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """«📅» button: send the event or commitment as an .ics file for the phone calendar."""
-        q = update.callback_query
-        assert q and q.data
-        if family.by_telegram_id(q.from_user.id) is None:
-            await q.answer(PRIVATE_BOT)
-            return
-        _, kind, raw_id = q.data.split(":")
-        payload: tuple[bytes, str] | None = None
-        if kind == "e":
-            e = db.get_event(int(raw_id))
-            if e is not None:
-                payload = (event_ics(e), e.text)
-        else:
-            c = db.get_commitment(int(raw_id))
-            if c is not None and c.has_due:
-                payload = (commitment_ics(c), c.text)
-        if payload is None:
-            await q.answer("Нема такого запису з датою.")
-            return
-        await q.answer()
-        data, text = payload
-        await context.bot.send_document(
-            q.from_user.id, InputFile(data, filename=ics_filename(text)), caption=text
-        )
 
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         person = member_of(update)
@@ -390,9 +308,12 @@ def build_bot(
             await update.message.reply_text("Веб не налаштовано: потрібні WEB_URL і WEB_SECRET.")
             return
         await update.message.reply_text(
-            "Веб-сторінка сім'ї: усе, що я записав, по днях. Посилання діє добу; після "
-            "входу браузер пам'ятає тебе.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Відкрити", url=link)]]),
+            with_link(
+                "Веб-сторінка сім'ї: усе, що я записав, по днях. Посилання діє добу; після "
+                "входу браузер пам'ятає тебе.",
+                link,
+            ),
+            link_preview_options=NO_PREVIEW,
         )
 
     async def stranger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -432,7 +353,6 @@ def build_bot(
     app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(MessageHandler(allowed & filters.VOICE, on_voice))
     app.add_handler(MessageHandler(~allowed, stranger))
-    app.add_handler(CallbackQueryHandler(on_ics, pattern=r"^ics:[ec]:\d+$"))
     assert app.job_queue
     app.job_queue.run_daily(
         send_digest, time=settings.digest_time.replace(tzinfo=settings.tz), name="digest"

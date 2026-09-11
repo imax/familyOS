@@ -138,6 +138,10 @@ def test_web_home_is_a_timeline(
     db.create_event(
         "Буріння", who=None, created_by="oleh", source_message_id=mid, date_from="2026-09-15"
     )
+    done = db.create_commitment(
+        "Замовити воду", owner="anna", created_by="anna", source_message_id=mid
+    )
+    db.close_commitment(done, "done")
     client = TestClient(build_web(_settings(), family, db))
 
     home = html.unescape(client.get("/", headers=_auth()).text)  # «п'ятниця» is escaped
@@ -152,6 +156,10 @@ def test_web_home_is_a_timeline(
     assert home.index("<h2>Без дати</h2>") < home.index("☐</span>Подзвонити газовику Петру")
     assert "Газовик" not in home  # notes have their own page
     assert 'class="id"' not in home  # database ids are not for people
+    tail = home[home.index("<h2>Зроблено</h2>") :]  # the last done ones, at the very bottom
+    assert home.index("<h2>Без дати</h2>") < home.index("<h2>Зроблено</h2>")
+    assert "✓</span>Замовити воду" in tail and "· Анна ·" in tail
+    assert "Замовити воду" not in home[: home.index("<h2>Зроблено</h2>")]
 
     notes = client.get("/journal", headers=_auth()).text
     assert "<h2>Вересень 2026</h2>" in notes and "Газовик Петро" in notes and "Олег, 10.09" in notes
@@ -176,15 +184,15 @@ def test_web_undated_order_by_dragging(
 
     home = client.get("/", headers=_auth()).text
     undated = home[home.index("<h2>Без дати</h2>") :]
-    assert undated.index("Перша") < undated.index("Друга")
+    assert undated.index("Друга") < undated.index("Перша")  # newest first until dragged
     assert '<ul class="rows sortable">' in undated and f'data-id="{first}"' in undated
     assert home.count('class="grip"') == 2 == undated.count('class="grip"')  # dated rows: none
 
-    r = client.post("/commitments/order", data={"ids": [second, first]}, headers=_auth())
+    r = client.post("/commitments/order", data={"ids": [first, second]}, headers=_auth())
     assert r.status_code == 204
     home = client.get("/", headers=_auth()).text
     undated = home[home.index("<h2>Без дати</h2>") :]
-    assert undated.index("Друга") < undated.index("Перша")
+    assert undated.index("Перша") < undated.index("Друга")
     assert client.post("/commitments/order", data={"ids": [first]}).status_code == 401
 
     db.close_commitment(second, "done")  # one row left: nothing to drag
@@ -218,3 +226,4 @@ def test_web_home_empty(db: Database, family: Family, monkeypatch: pytest.Monkey
     assert "Прострочено" not in home and "Завтра" not in home
     assert "Відпочиваємо :-)" in home  # today, empty
     assert home.count("нічого") == 1  # undated, empty
+    assert "Зроблено" not in home

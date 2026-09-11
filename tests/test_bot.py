@@ -4,17 +4,9 @@ from urllib.parse import parse_qs, urlparse
 from telegram import Chat, Message, Update, User
 
 from family_ea.auth import verify
-from family_ea.bot import (
-    build_bot,
-    digest_keyboard,
-    family_filter,
-    help_text,
-    ics_keyboard,
-    login_link,
-)
+from family_ea.bot import build_bot, family_filter, help_text, login_link, with_link
 from family_ea.db import Database, Member
 from family_ea.family import Family
-from tests.test_context import _c
 from tests.test_web import _settings
 
 
@@ -39,39 +31,25 @@ def test_family_filter_is_live(db: Database) -> None:
 
 def test_build_bot_registers_handlers_and_digest_job(db: Database, family: Family) -> None:
     app = build_bot(_settings(telegram_token="123:abc"), family, db, None, None)  # type: ignore[arg-type]
-    assert len(app.handlers[0]) == 10
+    assert len(app.handlers[0]) == 9
     assert app.job_queue
     assert sorted(j.name for j in app.job_queue.jobs()) == ["digest", "reminders"]
-
-
-def test_ics_keyboard_only_for_dated_items() -> None:
-    kb = ics_keyboard([_c(1, text="Стоматолог", due_at="2026-09-10T12:30:00Z"), _c(2)])
-    assert kb and [b.callback_data for row in kb.inline_keyboard for b in row] == ["ics:c:1"]
-    assert kb.inline_keyboard[0][0].text == "📅 Стоматолог"
-    assert ics_keyboard([_c(2)]) is None
 
 
 def test_login_link_signs_the_member_in() -> None:
     settings = _settings(web_url="https://ea.example/")
     member = Member("anna", "Анна", 2)
     link = login_link(settings, member)
-    assert link and link.startswith("https://ea.example/login?t=")
-    token = parse_qs(urlparse(link).query)["t"][0]
+    assert link and link.startswith("https://ea.example/l/") and len(link) < 60
+    token = urlparse(link).path.removeprefix("/l/")
     assert verify("s", token, "link") == "anna"
     assert verify("s", token, "session") is None  # a link cannot be pasted in as a cookie
     with_next = login_link(settings, member, "/facts")
     assert with_next and parse_qs(urlparse(with_next).query)["next"] == ["/facts"]
+    assert with_link("Нічого не висить.", link) == f"Нічого не висить.\n\n{link}"
+    assert with_link("Нічого не висить.", None) == "Нічого не висить."
     assert login_link(_settings(web_url=None), member) is None
     assert login_link(_settings(web_url="https://x", web_secret=None), member) is None
-
-
-def test_digest_keyboard_opens_the_web_first() -> None:
-    dated = _c(1, text="Стоматолог", due_at="2026-09-10T12:30:00Z")
-    kb = digest_keyboard([dated, _c(2)], "https://x/login?t=1")
-    labels = [b.text for row in kb.inline_keyboard for b in row] if kb else []
-    assert labels == ["Відкрити", "📅 Стоматолог"]
-    assert kb.inline_keyboard[0][0].url == "https://x/login?t=1"
-    assert digest_keyboard([_c(2)], None) is None
 
 
 def test_help_text_lists_commands() -> None:

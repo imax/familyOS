@@ -49,10 +49,10 @@ family_ea/
   transcribe.py OpenAI gpt-4o-transcribe via httpx
   ical.py       an event or dated commitment -> .ics bytes (timed or all-day)
   bot.py        python-telegram-bot handlers (/start /help /today /debug /facts /web, text,
-                voice), the 08:30 digest job, the per-minute reminder job, «📅» buttons that
-                send an .ics, «Відкрити» (a login link) under the digest and /today
-  web.py        FastAPI + Jinja: GET /login?t= (the bot's link; sets the cookie), GET / (the
-                boards, then the timeline; ?q= searches), GET /journal (Нотатки, by month), GET /items (Речі:
+                voice), the 08:30 digest job, the per-minute reminder job; the digest,
+                /today and /web end with a short login link
+  web.py        FastAPI + Jinja: GET /l/:token (the bot's link; sets the cookie), GET / (the
+                boards, the timeline, the last done ones; ?q= searches), GET /journal (Нотатки, by month), GET /items (Речі:
                 places, recent; ?place= ?owner= list), GET /items/:id (history), GET/POST
                 /facts, GET/POST /family, GET /messages, GET /events/:id.ics,
                 GET /commitments/:id.ics, POST /commitments/order (the undated list after
@@ -89,7 +89,8 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   `db.close_commitment`, no parallel logic. The one thing the web writes about a
   commitment is the order of the undated ones (`position`, dragged on the home page,
   `db.reorder_commitments`); the LLM never sets it, and `open_commitments()` returns that
-  order so the timeline, the digest and the LLM context agree.
+  order so the timeline, the digest and the LLM context agree. Unplaced ones (new since the
+  last drag) come first, newest first.
 - **Every push is deterministic and stored.** The morning digest renders each member's
   board (own first), today's and tomorrow's events, then commitments due today and overdue,
   never the undated ones (they are on the web), no LLM call, and is silent when empty;
@@ -97,12 +98,12 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   sent by a per-minute job when `at` comes, to the one member it is for or to everyone.
   Both are stored as bot messages in each recipient's chat so replies to them have
   context. Anything else the bot sends on its own must follow the same two rules.
-- **Web identity comes from the bot.** No passwords: `/web` (and the «Відкрити» button under
-  the digest) sends a member a signed link, opening it sets a year-long signed cookie.
-  Whoever is in `members` can log in; nothing is stored, so removing a member or rotating
-  `WEB_SECRET` is the only revocation.
+- **Web identity comes from the bot.** No passwords: the digest, `/today` and `/web` end
+  with a short signed link (`/l/<token>`, see `auth.py`); opening it sets a year-long signed
+  cookie. Whoever is in `members` can log in; nothing is stored, so removing a member or
+  rotating `WEB_SECRET` is the only revocation.
 - The bot must not promise what the code cannot do. The prompt lists what the bot does
-  (digest, reminders, «📅»); when a capability is added or removed, that list changes in
+  (digest, reminders, the web link); when a capability is added or removed, that list changes in
   the same commit.
 - Keep it small. Two people use this; a feature earns its place by removing a real pain.
 

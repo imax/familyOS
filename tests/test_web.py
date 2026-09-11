@@ -191,7 +191,7 @@ def test_login_from_a_bot_link(db: Database, family: Family) -> None:
     assert r.status_code == 401 and "напиши боту /web" in r.text
 
     token = sign("s", "link", "anna", LINK_TTL)
-    r = client.get("/login", params={"t": token, "next": "/facts"}, follow_redirects=False)
+    r = client.get(f"/l/{token}", params={"next": "/facts"}, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/facts"
     cookie = r.headers["set-cookie"]
     assert cookie.startswith("session=") and "HttpOnly" in cookie and "Secure" in cookie
@@ -200,7 +200,7 @@ def test_login_from_a_bot_link(db: Database, family: Family) -> None:
     assert "Анна" in client.get("/family").text
 
     # once the browser is logged in, a stale or foreign link just opens the page
-    r = client.get("/login", params={"t": "garbage"}, follow_redirects=False)
+    r = client.get("/l/garbage", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/"
 
 
@@ -208,7 +208,6 @@ def test_login_rejects_bad_links(db: Database, family: Family) -> None:
     client = TestClient(build_web(_settings(), family, db))
     stale = sign("s", "link", "anna", LINK_TTL, now=datetime(2000, 1, 1, tzinfo=UTC))
     bad = [
-        "",
         "garbage",
         stale,
         sign("s", "session", "anna", SESSION_TTL),  # a cookie is not a link
@@ -216,7 +215,7 @@ def test_login_rejects_bad_links(db: Database, family: Family) -> None:
         sign("other", "link", "anna", LINK_TTL),
     ]
     for t in bad:
-        r = client.get("/login", params={"t": t})
+        r = client.get(f"/l/{t}")
         assert r.status_code == 403 and "застаріло" in r.text, t
     assert not client.cookies
     assert client.get("/", headers=_auth("ghost")).status_code == 401
@@ -224,5 +223,5 @@ def test_login_rejects_bad_links(db: Database, family: Family) -> None:
     assert client.get("/", headers=link_as_cookie).status_code == 401
     # no open redirects
     good = sign("s", "link", "anna", LINK_TTL)
-    r = client.get("/login", params={"t": good, "next": "//evil.example/"}, follow_redirects=False)
+    r = client.get(f"/l/{good}", params={"next": "//evil.example/"}, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/"

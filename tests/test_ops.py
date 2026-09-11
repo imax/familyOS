@@ -101,10 +101,10 @@ def test_apply_ops_spec_example(db: Database, family: Family) -> None:
     assert by[("commitment", "close:done")].ok is False
     created = [a for a in applied if a.kind == "commitment" and a.op == "create"]
     assert all(a.ok for a in created) and len(created) == 2
-    open_items = db.open_commitments()
-    assert [c.text for c in open_items] == ["Попрати форму Олі", "Стоматолог"]
-    assert open_items[0].owner == "anna" and open_items[0].due_from == "2026-09-10"
-    assert open_items[1].due_at == "2026-09-10T12:30:00Z"
+    open_items = db.open_commitments()  # newest first
+    assert [c.text for c in open_items] == ["Стоматолог", "Попрати форму Олі"]
+    assert open_items[1].owner == "anna" and open_items[1].due_from == "2026-09-10"
+    assert open_items[0].due_at == "2026-09-10T12:30:00Z"
 
 
 def test_apply_ops_validates_and_updates(db: Database, family: Family) -> None:

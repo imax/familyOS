@@ -905,19 +905,29 @@ class Database:
         return _commitment(row) if row else None
 
     def open_commitments(self) -> list[Commitment]:
-        """Open ones in the family's order: the hand-set positions first (see
-        reorder_commitments), then the rest by id. The timeline, the digest and the LLM
-        context all take this order, so what someone dragged on the web holds everywhere."""
+        """Open ones in the family's order: the unplaced ones first, newest first (a new
+        commitment goes on top until someone drags it), then the hand-set positions (see
+        reorder_commitments). The timeline, the digest and the LLM context all take this
+        order, so what someone dragged on the web holds everywhere."""
         rows = self.conn.execute(
             "SELECT * FROM commitments WHERE status = 'open'"
-            " ORDER BY position IS NULL, position, id"
+            " ORDER BY position IS NOT NULL, position, id DESC"
+        ).fetchall()
+        return [_commitment(r) for r in rows]
+
+    def recent_done_commitments(self, limit: int) -> list[Commitment]:
+        """The last ones closed as done, newest first: the tail of the home page."""
+        rows = self.conn.execute(
+            "SELECT * FROM commitments WHERE status = 'done' ORDER BY closed_at DESC, id DESC"
+            " LIMIT ?",
+            (limit,),
         ).fetchall()
         return [_commitment(r) for r in rows]
 
     def reorder_commitments(self, ids: list[int]) -> None:
-        """The undated list as someone dragged it on the web: `ids` come first, in this order;
-        every other open commitment (new since that page was drawn, or listed by a stale one)
-        loses its position and follows by id. Ids that are not open are ignored."""
+        """The undated list as someone dragged it on the web: `ids` in this order; every other
+        open commitment (new since that page was drawn, or missing from a stale one) loses its
+        position and goes on top, newest first. Ids that are not open are ignored."""
         self.conn.execute("UPDATE commitments SET position = NULL WHERE status = 'open'")
         self.conn.executemany(
             "UPDATE commitments SET position = ? WHERE id = ? AND status = 'open'",

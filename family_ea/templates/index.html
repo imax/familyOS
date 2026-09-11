@@ -29,6 +29,14 @@
 <ul class="rows{% if sortable %} sortable{% endif %}">
   {% for r in timeline.undated %}{% include "_row.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
 </ul>
+{% if done %}
+<h2>Зроблено</h2>
+<ul class="rows done">
+  {% for c in done %}
+  <li><span class="mark">✓</span>{{ c.text }} <span class="meta">· {% if c.owner %}{{ c.owner | person }} · {% endif %}{{ c.closed_at | day }}</span></li>
+  {% endfor %}
+</ul>
+{% endif %}
 {% if sortable %}
 <script>
 // Drag by the handle (pointer events: mouse and touch alike). The row moves in the list as

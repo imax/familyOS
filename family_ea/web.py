@@ -1,7 +1,7 @@
 """Web view: what the system actually stored. Server-rendered; identity comes from the bot.
 
-There is no password. `/web` in Telegram (and «Відкрити» under the digest) sends a member
-a link to `/login?t=…`; opening it sets a long-lived signed cookie. Read-only except
+There is no password. The digest, /today and /web in Telegram end with a short link to
+`/l/<token>`; opening it sets a long-lived signed cookie. Read-only except
 `/facts` and `/family`, the two things a human edits by hand, and the order of undated
 commitments, dragged on the home page. Commitments are closed only through the LLM's
 `close` op (web done/drop was removed).
@@ -41,6 +41,7 @@ log = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 SESSION_COOKIE = "session"
+DONE_SHOWN = 10  # the «Зроблено» tail of the home page
 
 
 class NotLoggedIn(Exception):
@@ -57,6 +58,7 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["dt"] = lambda iso: fmt_dt(iso, settings.tz)
     templates.env.filters["date"] = fmt_date
+    templates.env.filters["day"] = lambda iso: fmt_dt(iso, settings.tz)[:5]
     templates.env.filters["due"] = lambda c: fmt_due(c, settings.tz)
     templates.env.filters["when"] = lambda e: fmt_event_when(e, settings.tz)
     templates.env.filters["person"] = family.display_name
@@ -93,9 +95,9 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
     async def healthz() -> dict[str, bool]:
         return {"ok": True}
 
-    @app.get("/login")
+    @app.get("/l/{token}")
     async def login(
-        request: Request, t: str = "", next_path: Annotated[str, Query(alias="next")] = "/"
+        request: Request, token: str, next_path: Annotated[str, Query(alias="next")] = "/"
     ) -> Response:
         """The link the bot sent: set the session cookie and go where the link pointed.
 
@@ -106,7 +108,7 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
         target = next_path if next_path.startswith("/") and not next_path.startswith("//") else "/"
         if member_from_cookie(request) is not None:
             return RedirectResponse(target, status_code=303)
-        subject = verify(key, t, "link")
+        subject = verify(key, token, "link")
         member = family.get(subject) if subject else None
         if member is None:
             raise NotLoggedIn("Посилання застаріло. Напиши боту /web, він дасть нове.", 403)
@@ -125,7 +127,8 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
     async def index(
         request: Request, member: Annotated[Member, Depends(authed)], q: str | None = None
     ) -> HTMLResponse:
-        """The boards (the viewer's own first), then the timeline; `?q=` searches instead."""
+        """The boards (the viewer's own first), the timeline, the last done commitments;
+        `?q=` searches instead."""
         if q and q.strip():
             q = q.strip()
             pattern = word_pattern(q)
@@ -146,7 +149,14 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
         )
         boards = today_blocks(db.current_today_lists(), family, member.id, now)
         return templates.TemplateResponse(
-            request, "index.html", {"q": "", "timeline": timeline, "today": boards}
+            request,
+            "index.html",
+            {
+                "q": "",
+                "timeline": timeline,
+                "today": boards,
+                "done": db.recent_done_commitments(DONE_SHOWN),
+            },
         )
 
     @app.get("/journal", response_class=HTMLResponse, dependencies=[Depends(authed)])

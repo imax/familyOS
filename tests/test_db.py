@@ -69,16 +69,17 @@ def test_commitments_keep_the_order_dragged_on_the_web(db: Database) -> None:
         return db.create_commitment(text, owner=None, created_by="oleh", source_message_id=mid)
 
     a, b, c = new("a"), new("b"), new("c")
-    assert [x.id for x in db.open_commitments()] == [a, b, c]  # by id until someone drags
+    assert [x.id for x in db.open_commitments()] == [c, b, a]  # newest first until someone drags
 
     db.reorder_commitments([c, a, 999, b])  # 999: no such commitment, ignored
     assert [(x.id, x.position) for x in db.open_commitments()] == [(c, 1), (a, 2), (b, 4)]
-    d = new("d")  # new since the page was drawn: after the placed ones
-    assert [x.id for x in db.open_commitments()] == [c, a, b, d]
+    d = new("d")  # new since the page was drawn: on top, until placed
+    assert [x.id for x in db.open_commitments()] == [d, c, a, b]
 
     db.close_commitment(a, "done")
-    db.reorder_commitments([a, d, c])  # a stale page: a is closed, ignored; b unlisted: last
-    assert [(x.id, x.position) for x in db.open_commitments()] == [(d, 2), (c, 3), (b, None)]
+    db.reorder_commitments([a, d, c])  # a stale page: a is closed, ignored; b unlisted: on top
+    assert [(x.id, x.position) for x in db.open_commitments()] == [(b, None), (d, 2), (c, 3)]
+    assert [x.id for x in db.recent_done_commitments(5)] == [a]
 
 
 def test_commitments_get_a_position_column(tmp_path: Path) -> None:

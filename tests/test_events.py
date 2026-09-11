@@ -2,7 +2,6 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
-from family_ea.bot import ics_keyboard
 from family_ea.context import (
     Agenda,
     bucket_commitments,
@@ -268,17 +267,3 @@ def test_web_events(db: Database, family: Family) -> None:
     assert 'filename="stomatoloh.ics"' in ics.headers["content-disposition"]
     assert client.get("/events/999.ics", headers=_auth()).status_code == 404
     assert client.get(f"/events/{eid}.ics").status_code == 401
-
-
-def test_ics_keyboard_events_and_dated_commitments() -> None:
-    kb = ics_keyboard(
-        [
-            _e(1, text="Стоматолог", starts_at="2026-09-11T12:30:00Z"),
-            _c(2, text="Форма", due_from="2026-09-10"),
-            _c(3),
-        ]
-    )
-    assert kb and [b.callback_data for row in kb.inline_keyboard for b in row] == [
-        "ics:e:1",
-        "ics:c:2",
-    ]
