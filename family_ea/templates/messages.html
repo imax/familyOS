@@ -6,7 +6,7 @@
   {% for m in messages %}
   <li>
     <span class="id">#{{ m.id }}</span>
-    <span class="meta">{{ m.created_at | dt }} · {% if m.user_id == 'bot' %}бот → {{ m.chat_with | person }}{% else %}{{ m.user_id | person }}{% endif %}{% if m.is_voice %} · 🎙{% endif %}</span><br>
+    <span class="meta">{{ m.created_at | dt }} · {% if m.user_id == 'bot' %}бот → {{ m.chat_with | person }}{% else %}{{ m.user_id | person }}{% endif %}{% if m.is_voice %} · 🎙{% endif %}{% if m.photo_file_id %} · 📷{% endif %}</span><br>
     {{ m.raw_text }}
     {% if m.llm_result %}<details><summary>llm_result</summary><pre>{{ m.llm_result | pretty_json }}</pre></details>{% endif %}
   </li>

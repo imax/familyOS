@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TEXT NOT NULL,         -- ISO UTC
   raw_text TEXT NOT NULL,           -- for voice: the transcript
   is_voice INTEGER NOT NULL DEFAULT 0,
+  photo_file_id TEXT,               -- Telegram file id of the photo sent with the message
   llm_result TEXT                   -- JSON: what the LLM returned and what was applied
 );
 
@@ -174,6 +175,7 @@ class Message:
     created_at: str
     raw_text: str
     is_voice: bool
+    photo_file_id: str | None
     llm_result: str | None
 
 
@@ -390,6 +392,11 @@ class Database:
             # 2026-09-11: undated commitments got a hand-set order, dragged on the web.
             self.conn.execute("ALTER TABLE commitments ADD COLUMN position INTEGER")
             self.conn.commit()
+        columns = {r[1] for r in self.conn.execute("PRAGMA table_info(messages)")}
+        if "photo_file_id" not in columns:
+            # 2026-09-11: photos; the message keeps the Telegram file id, not the file.
+            self.conn.execute("ALTER TABLE messages ADD COLUMN photo_file_id TEXT")
+            self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -414,13 +421,22 @@ class Database:
         raw_text: str,
         *,
         is_voice: bool = False,
+        photo_file_id: str | None = None,
         tg_message_id: int | None = None,
     ) -> int:
         cur = self.conn.execute(
             "INSERT INTO messages"
-            " (user_id, chat_with, tg_message_id, created_at, raw_text, is_voice)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, chat_with, tg_message_id, utc_now_iso(), raw_text, int(is_voice)),
+            " (user_id, chat_with, tg_message_id, created_at, raw_text, is_voice, photo_file_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                user_id,
+                chat_with,
+                tg_message_id,
+                utc_now_iso(),
+                raw_text,
+                int(is_voice),
+                photo_file_id,
+            ),
         )
         self.conn.commit()
         return int(cur.lastrowid or 0)

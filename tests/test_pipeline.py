@@ -2,7 +2,7 @@ import json
 
 from family_ea.db import Database
 from family_ea.family import Family, Member
-from family_ea.llm import LlmCall, LlmError, LlmResult
+from family_ea.llm import Image, LlmCall, LlmError, LlmResult
 from family_ea.pipeline import ERROR_REPLY, Pipeline
 from tests.conftest import KYIV
 
@@ -11,9 +11,11 @@ class FakeLlm:
     def __init__(self, result: LlmResult | None) -> None:
         self.result = result
         self.contexts: list[str] = []
+        self.images: list[Image | None] = []
 
-    async def run(self, context: str) -> LlmCall:
+    async def run(self, context: str, image: Image | None = None) -> LlmCall:
         self.contexts.append(context)
+        self.images.append(image)
         if self.result is None:
             raise LlmError("boom")
         return LlmCall(self.result, "fake-model", {"input_tokens": 1, "output_tokens": 1}, "req")
@@ -53,3 +55,29 @@ async def test_pipeline_llm_failure_keeps_message(
     stored = db.get_message(outcome.message_id)
     assert stored and "boom" in json.loads(stored.llm_result or "")["error"]
     assert db.get_message(outcome.bot_message_id).raw_text == ERROR_REPLY
+
+
+async def test_pipeline_sends_the_photo_and_keeps_only_its_id(
+    db: Database, family: Family, oleh: Member
+) -> None:
+    llm = FakeLlm(
+        LlmResult.model_validate(
+            {"reply": "Записав.", "journal": [{"op": "create", "text": "Чек: 1 200 грн"}]}
+        )
+    )
+    photo = Image(b"\xff\xd8not-really-a-jpeg", "image/jpeg")
+    outcome = await Pipeline(db, family, llm, KYIV).handle(
+        oleh, "додай у нотатки", photo=photo, photo_file_id="AgACAgIAAxkBAAI", tg_message_id=11
+    )
+    assert outcome.reply == "Записав."
+    assert llm.images == [photo]  # the bytes go to the LLM with this call only
+    assert "з фото (підпис нижче):\nдодай у нотатки" in llm.contexts[0]
+    stored = db.get_message(outcome.message_id)
+    assert stored and stored.photo_file_id == "AgACAgIAAxkBAAI"
+    assert stored.raw_text == "додай у нотатки"
+
+    # no caption: the LLM is told so, and the message stays an empty text
+    await Pipeline(db, family, llm, KYIV).handle(oleh, "", photo=photo, photo_file_id="AgAD")
+    assert "з фото (підпис нижче):\n(без підпису)" in llm.contexts[1]
+    # the earlier photo message shows in the recent messages with a marker, not the image
+    assert "(з фото): додай у нотатки" in llm.contexts[1]

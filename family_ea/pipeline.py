@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from .context import build_context
 from .db import Database, Member
 from .family import Family
-from .llm import LlmResult, Understander
+from .llm import Image, LlmResult, Understander
 from .ops import Applied, apply_ops
 
 log = logging.getLogger(__name__)
@@ -42,16 +42,27 @@ class Pipeline:
         text: str,
         *,
         is_voice: bool = False,
+        photo: Image | None = None,
+        photo_file_id: str | None = None,
         tg_message_id: int | None = None,
     ) -> Outcome:
+        """`photo` goes to the LLM with this one call and is then dropped; only its Telegram
+        `photo_file_id` stays on the message."""
         message_id = self.db.insert_message(
-            author.id, author.id, text, is_voice=is_voice, tg_message_id=tg_message_id
+            author.id,
+            author.id,
+            text,
+            is_voice=is_voice,
+            photo_file_id=photo_file_id,
+            tg_message_id=tg_message_id,
         )
         now = datetime.now(self.tz)
-        context = build_context(self.db, self.family, now, author, text)
+        context = build_context(
+            self.db, self.family, now, author, text, with_photo=photo is not None
+        )
 
         try:
-            call = await self.llm.run(context)
+            call = await self.llm.run(context, image=photo)
         except Exception as exc:  # any LLM failure: log, tell the user, keep the message
             log.exception("LLM call failed for message %s", message_id)
             self.db.set_llm_result(message_id, json.dumps({"error": repr(exc)}, ensure_ascii=False))

@@ -231,3 +231,27 @@ def test_item_lifecycle_writes_history(db: Database) -> None:
     assert db.item_history(b)[0].kind == "gone" and db.get_item(b).removed_at
     assert sorted(i.id for i in db.recent_items()) == [a, c]
     assert db.list_items(place="офіс") == [] and db.places() == [("будинок", 1), ("квартира", 1)]
+
+
+def test_messages_get_a_photo_column(tmp_path: Path) -> None:
+    """A database from before photos has no `photo_file_id`; the first start adds it."""
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE messages (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL,
+          chat_with TEXT NOT NULL, tg_message_id INTEGER, created_at TEXT NOT NULL,
+          raw_text TEXT NOT NULL, is_voice INTEGER NOT NULL DEFAULT 0, llm_result TEXT);
+        INSERT INTO messages VALUES
+          (1, 'oleh', 'oleh', 5, '2026-09-10T09:00:00Z', 'Привіт', 0, NULL);
+        """
+    )
+    conn.close()
+
+    db = Database(path)
+    old = db.get_message(1)
+    assert old and old.photo_file_id is None and old.raw_text == "Привіт"
+    new_id = db.insert_message("oleh", "oleh", "чек", photo_file_id="AgAC")
+    new = db.get_message(new_id)
+    assert new and new.photo_file_id == "AgAC" and not new.is_voice
+    db.close()

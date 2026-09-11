@@ -598,12 +598,28 @@ def _message_line(msg: Message, family: Family, tz: ZoneInfo) -> str:
         who = f"бот → {family.display_name(msg.chat_with)}"
     else:
         who = family.display_name(msg.user_id)
-    voice = " (голосове)" if msg.is_voice else ""
-    return f"[{when}] {who}{voice}: {msg.raw_text}"
+    kind = " (голосове)" if msg.is_voice else " (з фото)" if msg.photo_file_id else ""
+    return f"[{when}] {who}{kind}: {msg.raw_text}"
 
 
-def build_context(db: Database, family: Family, now: datetime, author: Member, text: str) -> str:
-    """Assemble everything the LLM needs for one message."""
+def _incoming_line(author: Member, text: str, with_photo: bool) -> str:
+    who = f"від {author.id} ({author.name})"
+    if with_photo:
+        return f"{who}, з фото (підпис нижче):\n{text or '(без підпису)'}"
+    return f"{who}:\n{text}"
+
+
+def build_context(
+    db: Database,
+    family: Family,
+    now: datetime,
+    author: Member,
+    text: str,
+    *,
+    with_photo: bool = False,
+) -> str:
+    """Assemble everything the LLM needs for one message. With a photo, `text` is its caption
+    and the image itself is sent as a separate block before this text."""
     tz = now.tzinfo
     assert isinstance(tz, ZoneInfo)
     since = (now - timedelta(days=RECENT_WINDOW_DAYS)).astimezone(ZoneInfo("UTC"))
@@ -681,6 +697,6 @@ def build_context(db: Database, family: Family, now: datetime, author: Member, t
             "Останні повідомлення",
             [_message_line(m, family, tz) for m in recent_messages],
         ),
-        section("Нове повідомлення", [f"від {author.id} ({author.name}):\n{text}"]),
+        section("Нове повідомлення", [_incoming_line(author, text, with_photo)]),
     ]
     return "\n\n".join(parts)

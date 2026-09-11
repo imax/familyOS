@@ -18,7 +18,7 @@ from .config import Settings
 from .context import fmt_dt
 from .db import Database
 from .family import Family
-from .llm import Llm
+from .llm import Image, Llm
 from .pipeline import Pipeline
 from .transcribe import Transcriber
 from .web import build_web
@@ -32,6 +32,14 @@ def setup_logging() -> None:
     )
     for name in ("httpx", "httpx2"):  # the anthropic SDK logs requests via httpx2
         logging.getLogger(name).setLevel(logging.WARNING)
+
+
+_IMAGE_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
 
 
 def build_pipeline(settings: Settings, db: Database, family: Family) -> Pipeline:
@@ -95,7 +103,10 @@ async def chat(settings: Settings, as_user: str, name: str | None = None) -> Non
         person = family.add(name, member_id=as_user)
         print(f"created member {person.id} ({person.name})")
     pipeline = build_pipeline(settings, db, family)
-    print(f"chatting as {person.name}; db={settings.database_path}; empty line to quit")
+    print(
+        f"chatting as {person.name}; db={settings.database_path}; empty line to quit;"
+        " `/photo path/to.jpg caption` sends a photo"
+    )
     while True:
         try:
             text = await asyncio.to_thread(input, f"{person.id}> ")
@@ -103,7 +114,15 @@ async def chat(settings: Settings, as_user: str, name: str | None = None) -> Non
             break
         if not text.strip():
             break
-        outcome = await pipeline.handle(person, text)
+        photo = None
+        if text.startswith("/photo "):
+            path, _, text = text[len("/photo ") :].strip().partition(" ")
+            photo = Image(
+                Path(path).read_bytes(), _IMAGE_TYPES.get(Path(path).suffix.lower(), "image/jpeg")
+            )
+        outcome = await pipeline.handle(
+            person, text, photo=photo, photo_file_id="local" if photo else None
+        )
         print(f"bot> {outcome.reply}")
         for a in outcome.applied:
             flag = "ok" if a.ok else "SKIPPED"
@@ -197,7 +216,7 @@ def show_log(settings: Settings, db_path: Path, last: int) -> None:
             who = f"bot -> {family.display_name(m.chat_with)}"
         else:
             who = family.display_name(m.user_id)
-        voice = " (voice)" if m.is_voice else ""
+        voice = " (voice)" if m.is_voice else " (photo)" if m.photo_file_id else ""
         print(f"#{m.id} {fmt_dt(m.created_at, settings.tz)} {who}{voice}: {m.raw_text}")
         if m.llm_result:
             for line in llm_result_lines(m.llm_result):

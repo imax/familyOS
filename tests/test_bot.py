@@ -31,7 +31,7 @@ def test_family_filter_is_live(db: Database) -> None:
 
 def test_build_bot_registers_handlers_and_digest_job(db: Database, family: Family) -> None:
     app = build_bot(_settings(telegram_token="123:abc"), family, db, None, None)  # type: ignore[arg-type]
-    assert len(app.handlers[0]) == 9
+    assert len(app.handlers[0]) == 10
     assert app.job_queue
     assert sorted(j.name for j in app.job_queue.jobs()) == ["digest", "reminders"]
 
@@ -57,4 +57,5 @@ def test_login_link_signs_the_member_in() -> None:
 def test_help_text_lists_commands() -> None:
     text = help_text(_settings())
     assert "08:30" in text and "/web — " in text and "/help — " in text
+    assert "Фото" in text
     assert "/start" not in text

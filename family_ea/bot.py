@@ -32,6 +32,7 @@ from .context import (
 )
 from .db import Database, Member, Reminder
 from .family import Family
+from .llm import Image
 from .pipeline import Pipeline
 from .transcribe import Transcriber
 
@@ -61,6 +62,8 @@ def help_text(settings: Settings) -> str:
     commands = "\n".join(f"/{c.command} — {c.description}" for c in COMMANDS)
     return (
         "Пиши або наговорюй що завгодно: що сталося, що треба зробити, де що лежить. "
+        "Фото теж: підпиши, що з ним зробити («додай у нотатки», «зроби з цього справу»), "
+        "і я перепишу з нього все потрібне. "
         "«На сьогодні: пошта, планка, авто» веде твій список на день; додавай і викреслюй "
         f"словами, список партнера теж видно. Питай — відповім з того, що знаю. Щоранку о "
         f"{when} надсилаю дайджест, а нагадую, коли попросиш.\n\nКоманди:\n{commands}"
@@ -168,10 +171,22 @@ def build_bot(
             log.info("admin joined as member %s", member.id)
         return member
 
-    async def send_outcome(update: Update, person: Member, text: str, is_voice: bool) -> None:
+    async def send_outcome(
+        update: Update,
+        person: Member,
+        text: str,
+        is_voice: bool,
+        photo: Image | None = None,
+        photo_file_id: str | None = None,
+    ) -> None:
         assert update.message
         outcome = await pipeline.handle(
-            person, text, is_voice=is_voice, tg_message_id=update.message.message_id
+            person,
+            text,
+            is_voice=is_voice,
+            photo=photo,
+            photo_file_id=photo_file_id,
+            tg_message_id=update.message.message_id,
         )
         sent = await update.message.reply_text(_clip(outcome.reply))
         db.set_tg_message_id(outcome.bot_message_id, sent.message_id)
@@ -277,6 +292,29 @@ def build_bot(
         await update.message.chat.send_action(ChatAction.TYPING)
         await send_outcome(update, person, text, is_voice=True)
 
+    async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """A photo with a caption: the largest size goes to the LLM as an image, the caption
+        is the message text. The file is not kept, only its Telegram id."""
+        person = member_of(update)
+        assert update.message and update.message.photo and person
+        await update.message.chat.send_action(ChatAction.TYPING)
+        largest = update.message.photo[-1]
+        try:
+            tg_file = await largest.get_file()
+            data = bytes(await tg_file.download_as_bytearray())
+        except Exception:
+            log.exception("photo download failed")
+            await update.message.reply_text("Не зміг завантажити фото. Спробуй ще раз.")
+            return
+        await send_outcome(
+            update,
+            person,
+            update.message.caption or "",
+            is_voice=False,
+            photo=Image(data, "image/jpeg"),  # Telegram re-encodes photos as JPEG
+            photo_file_id=largest.file_id,
+        )
+
     async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         person = member_of(update)
         assert update.message and person
@@ -352,6 +390,7 @@ def build_bot(
     app.add_handler(CommandHandler("web", web, filters=allowed))
     app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(MessageHandler(allowed & filters.VOICE, on_voice))
+    app.add_handler(MessageHandler(allowed & filters.PHOTO, on_photo))
     app.add_handler(MessageHandler(~allowed, stranger))
     assert app.job_queue
     app.job_queue.run_daily(

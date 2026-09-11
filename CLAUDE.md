@@ -16,7 +16,8 @@ production:** `pull` then `log` (see Commands).
 ```bash
 uv sync                                   # install (creates .venv)
 uv run python -m family_ea                # run bot + web in one process
-uv run python -m family_ea chat --as oleh --name Олег   # the pipeline as a REPL, no Telegram
+uv run python -m family_ea chat --as oleh --name Олег   # the pipeline as a REPL, no Telegram;
+                                          #   `/photo path.jpg caption` sends a photo
 uv run python -m family_ea pull           # production db snapshot -> data/prod.db
 uv run python -m family_ea backup --db data/prod.db   # zip: db snapshot + notes.md -> data/backups/
 uv run python -m family_ea log --db data/prod.db --last 50   # messages + what the LLM did
@@ -54,7 +55,7 @@ family_ea/
   ical.py       an event or dated commitment -> .ics bytes (timed or all-day)
   backup.py     the backup archive: a checked db snapshot + the notes as one Markdown, zipped
   bot.py        python-telegram-bot handlers (/start /help /today /debug /facts /web, text,
-                voice), the 08:30 digest job, the per-minute reminder job, «Відкрити» (a
+                voice, photo), the 08:30 digest job, the per-minute reminder job, «Відкрити» (a
                 login link) under the digest, /today and /web
   web.py        FastAPI + Jinja: GET /login?t= (the bot's link; sets the cookie), GET / (the
                 boards, the timeline, the last done ones; ?q= searches), GET /journal (Нотатки, by month), GET /items (Речі:
@@ -86,6 +87,10 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   digest head, the viewer's own first) and versioned like facts. Nothing resets it;
   staleness is shown («оновлено вчора»), not acted on.
 - **Original messages are never mutated.** `messages.raw_text` is append-only.
+- **A photo is read once and not kept.** It goes to the LLM as an image block before the
+  context of that one call (`llm.Image`, `user_content()`); the caption is the message
+  text and `messages.photo_file_id` keeps only the Telegram id. The prompt makes the
+  record self-contained, and a photo without a clear caption changes nothing.
 - `messages.chat_with` is the family member whose chat the row belongs to, so bot replies
   and pushes can be attributed in context; `messages.llm_result` holds
   `{model, usage, request_id, output, applied}`, not the bare LLM output.

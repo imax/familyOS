@@ -8,9 +8,10 @@ plus `today`, a member's «на сьогодні» board: free text, replaced wh
 
 from __future__ import annotations
 
+import base64
 import logging
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel, Field
@@ -140,7 +141,8 @@ SYSTEM_PROMPT = """\
 людина розповідає, — це journal, items, events, commitments і reminders; а «Списки на \
 сьогодні» — дошка кожного, яку ти переписуєш лише на явне прохання (today).
 
-Що ти вмієш, і більше нічого: відповідати в цьому чаті; вести нотатки (journal) і речі \
+Що ти вмієш, і більше нічого: відповідати в цьому чаті; читати фото, яке прислали з \
+повідомленням; вести нотатки (journal) і речі \
 (items: що у нас є і де лежить), events, commitments, reminders і список на сьогодні \
 (today) кожного; щоранку о 08:30 писати кожному дайджест (списки на сьогодні, події на \
 сьогодні й завтра, справи на сьогодні, прострочені; справи без дати лише на вебі); \
@@ -149,6 +151,15 @@ SYSTEM_PROMPT = """\
 Ти не бачиш, що відбувається (де хто є, кого зустрів), не дзвониш, не пишеш стороннім, не \
 шукаєш в інтернеті. Не обіцяй у reply нічого поза цим списком; якщо просять те, чого не \
 вмієш, скажи, що зробиш натомість.
+
+Повідомлення може прийти з фото: воно стоїть перед контекстом, а підпис до нього — у «Нове \
+повідомлення». Підпис каже, що зробити: «зроби з цього таску» — commitment, «додай у \
+нотатки» — journal, «це лежить у сейфі» — item, афіша чи запрошення з датою — event. Усе \
+потрібне для запису бери з фото: текст, назви, суми, дати, номери, що зображено; запис має \
+бути самодостатнім, бо фото ніде не зберігається і після цієї відповіді його не буде. У \
+reply не описуй фото, а підтверди, що записав. Без підпису або коли з підпису не ясно, \
+що зробити, — нічого не записуй: скажи в одному реченні, що бачиш, і спитай, що з цим \
+зробити.
 
 Що повертати:
 - reply — коротка відповідь людині українською. Без зайвих слів і без переказу того, що вона \
@@ -248,8 +259,33 @@ class LlmError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class Image:
+    """A photo sent with the message: raw bytes and their media type. Not stored anywhere."""
+
+    data: bytes
+    media_type: str  # image/jpeg, image/png, image/gif, image/webp
+
+
 class Understander(Protocol):
-    async def run(self, context: str) -> LlmCall: ...
+    async def run(self, context: str, image: Image | None = None) -> LlmCall: ...
+
+
+def user_content(context: str, image: Image | None) -> str | list[dict[str, Any]]:
+    """The user turn: the context alone, or the photo first and the context after it."""
+    if image is None:
+        return context
+    return [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": image.media_type,
+                "data": base64.b64encode(image.data).decode(),
+            },
+        },
+        {"type": "text", "text": context},
+    ]
 
 
 class Llm:
@@ -260,7 +296,7 @@ class Llm:
         self.effort = effort
         self.client = AsyncAnthropic(api_key=api_key) if api_key else AsyncAnthropic()
 
-    async def run(self, context: str) -> LlmCall:
+    async def run(self, context: str, image: Image | None = None) -> LlmCall:
         response = await self.client.messages.parse(
             model=self.model,
             max_tokens=8192,
@@ -274,7 +310,7 @@ class Llm:
                     "cache_control": {"type": "ephemeral", "ttl": "1h"},
                 }
             ],
-            messages=[{"role": "user", "content": context}],
+            messages=[{"role": "user", "content": user_content(context, image)}],
             output_format=LlmResult,
             output_config={"effort": self.effort},
         )
