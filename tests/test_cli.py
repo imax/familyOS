@@ -11,7 +11,7 @@ from family_ea.auth import BACKUP_TTL, sign
 from family_ea.db import Database
 from family_ea.family import Family
 from family_ea.files import FileStore
-from family_ea.main import llm_result_lines, pull, show_log
+from family_ea.main import files_next_to, llm_result_lines, pull, show_log
 from family_ea.web import build_web
 from tests.test_web import JPEG, _auth, _settings
 
@@ -98,7 +98,8 @@ def test_pull_downloads_the_snapshot_and_drops_sftp_leftovers(
     assert all(r.headers["authorization"].startswith("Bearer ") for r in seen)
     assert _rows(dest)[0] == ("oleh", "Стоматолог завтра о 15:30")
     assert not Path(f"{dest}-wal").exists()
-    mirrored = tmp_path / "data" / "prod-files" / sha[:2] / f"{sha}.jpg"
+    mirrored = files_next_to(dest) / sha[:2] / f"{sha}.jpg"
+    assert mirrored == tmp_path / "data" / "prod-files" / sha[:2] / f"{sha}.jpg"
     assert mirrored.read_bytes() == JPEG
 
     # the next pull fetches the database again but no file it already has

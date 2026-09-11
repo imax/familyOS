@@ -12,7 +12,7 @@ import asyncio
 from pathlib import Path
 
 from .config import load_settings
-from .main import backup, chat, pull, serve, setup_logging, show_log
+from .main import backup, chat, files_next_to, pull, serve, setup_logging, show_log
 
 
 def main() -> None:
@@ -27,8 +27,15 @@ def main() -> None:
     pull_parser.add_argument(
         "--to", type=Path, default=Path("data/prod.db"), help="where to save it"
     )
-    backup_parser = sub.add_parser("backup", help="zip a database snapshot and the notes as .md")
+    backup_parser = sub.add_parser(
+        "backup", help="zip a database snapshot, the notes as .md and the files"
+    )
     backup_parser.add_argument("--db", type=Path, help="database file (default: DATABASE_PATH)")
+    backup_parser.add_argument(
+        "--files",
+        type=Path,
+        help="its files (default: FILES_DIR, or <db>-files/ next to a --db, where pull puts them)",
+    )
     backup_parser.add_argument(
         "--to", type=Path, default=Path("data/backups"), help="directory for the archive"
     )
@@ -44,7 +51,8 @@ def main() -> None:
     elif args.command == "pull":
         pull(settings, args.to, args.url)
     elif args.command == "backup":
-        backup(settings, args.db or settings.database_path, args.to)
+        files = args.files or (files_next_to(args.db) if args.db else settings.files_dir)
+        backup(settings, args.db or settings.database_path, files, args.to)
     elif args.command == "log":
         show_log(settings, args.db or settings.database_path, args.last)
     else:

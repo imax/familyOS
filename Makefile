@@ -7,7 +7,7 @@ LAST ?= 50
 help:
 	@grep -E '^[a-z]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-8s %s\n", $$1, $$2}'
 
-backup: data/prod.db  ## pull the production db, zip it with the notes -> data/backups/
+backup: data/prod.db  ## pull the production db and files, zip them with the notes -> data/backups/
 	uv run python -m family_ea backup --db data/prod.db
 
 log: data/prod.db  ## pull the production db, print the last messages (LAST=50)
