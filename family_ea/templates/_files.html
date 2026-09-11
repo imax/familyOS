@@ -1,2 +1,2 @@
 {#- thumbnails of `shown`; one line, because a note's li is white-space: pre-line -#}
-<div class="files">{% for a in shown %}<a href="/files/{{ a.sha256 }}"{% if not a.is_image %} target="_blank"{% endif %}>{% if a.is_image %}<img src="/files/{{ a.sha256 }}" alt="" loading="lazy">{% else %}📄 {{ a.name or a.mime }}{% endif %}</a>{% endfor %}</div>
+<div class="files">{% for a in shown %}<a href="/files/{{ a.sha256 }}"{% if a.is_image %} data-image{% else %} target="_blank"{% endif %}>{% if a.is_image %}<img src="/files/{{ a.sha256 }}" alt="" loading="lazy">{% else %}📄 {{ a.name or a.mime }}{% endif %}</a>{% endfor %}</div>

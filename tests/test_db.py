@@ -233,6 +233,28 @@ def test_item_lifecycle_writes_history(db: Database) -> None:
     assert db.list_items(place="офіс") == [] and db.places() == [("будинок", 1), ("квартира", 1)]
 
 
+def test_attachments_get_a_description_column(tmp_path: Path) -> None:
+    """An `attachments` table from the first files release has no `description`."""
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE attachments (id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL,
+          sha256 TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, name TEXT,
+          created_at TEXT NOT NULL);
+        INSERT INTO attachments VALUES (1, 1, 'ab', 'image/jpeg', 3, NULL, '2026-09-11T15:00:00Z');
+        """
+    )
+    conn.close()
+
+    db = Database(path)
+    [old] = db.list_attachments()
+    assert old.description is None and old.sha256 == "ab"
+    db.describe_attachments(1, "Чек")
+    assert db.list_attachments()[0].description == "Чек"
+    db.close()
+
+
 def test_messages_get_a_photo_column(tmp_path: Path) -> None:
     """A database from before photos has no `photo_file_id`; the first start adds it."""
     path = tmp_path / "old.db"

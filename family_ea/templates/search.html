@@ -17,4 +17,8 @@
 <ul class="journal">
   {% for e in entries %}{% include "_entry.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
 </ul>
+<h2>Документи · «{{ q }}»</h2>
+<ul class="docs">
+  {% for d in documents %}{% include "_document.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
+</ul>
 {% endblock %}

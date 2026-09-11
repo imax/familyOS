@@ -82,6 +82,8 @@ class Pipeline:
             bot_message_id = self.db.insert_message("bot", author.id, ERROR_REPLY)
             return Outcome(message_id, bot_message_id, ERROR_REPLY, None, [], error=repr(exc))
 
+        if photo is not None and self.store is not None and call.result.photo.strip():
+            self.db.describe_attachments(message_id, call.result.photo.strip())
         applied = apply_ops(
             self.db,
             call.result,

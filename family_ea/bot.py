@@ -315,6 +315,14 @@ def build_bot(
             photo_file_id=largest.file_id,
         )
 
+    async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """A file sent as a document (PDF, an image as a file, anything else): not read yet.
+        Saying so beats silence; the prompt's list of what the bot does stays true."""
+        assert update.message
+        await update.message.reply_text(
+            "Файли поки не читаю, лише фото. Надішли як фото (не як файл), PDF буде пізніше."
+        )
+
     async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         person = member_of(update)
         assert update.message and person
@@ -391,6 +399,7 @@ def build_bot(
     app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(MessageHandler(allowed & filters.VOICE, on_voice))
     app.add_handler(MessageHandler(allowed & filters.PHOTO, on_photo))
+    app.add_handler(MessageHandler(allowed & filters.Document.ALL, on_document))
     app.add_handler(MessageHandler(~allowed, stranger))
     assert app.job_queue
     app.job_queue.run_daily(

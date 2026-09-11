@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from .db import Attachment, Database, Entry, Item, Message
+from .db import Attachment, Commitment, Database, Entry, Event, Item, Message
 
 EXTENSIONS = {
     "image/jpeg": ".jpg",
@@ -103,15 +103,33 @@ class Document:
     message: Message
     entries: list[Entry]
     items: list[Item]
+    commitments: list[Commitment]
+    events: list[Event]
+
+    @property
+    def has_records(self) -> bool:
+        return bool(self.entries or self.items or self.commitments or self.events)
 
 
 def documents(db: Database, limit: int = 200) -> list[Document]:
-    """Every stored file, newest first, with the notes and items its message created or
-    changed (deleted notes are left out; a gone item still shows, its page says so)."""
+    """Every stored file, newest first, with the notes, items, commitments and events its
+    message created or changed (deleted notes are left out; a gone item or a closed
+    commitment still shows, marked as such)."""
+    return _documents(db, db.attachments_with_messages(limit=limit))
+
+
+def search_documents(db: Database, pattern: str, limit: int = 50) -> list[Document]:
+    """Files whose description or caption matches `pattern` (context.word_pattern)."""
+    return _documents(db, db.search_attachments(pattern, limit))
+
+
+def _documents(db: Database, rows: list[tuple[Attachment, Message]]) -> list[Document]:
     out: list[Document] = []
-    for a, m in db.attachments_with_messages(limit=limit):
+    for a, m in rows:
         entries: list[Entry] = []
         items: list[Item] = []
+        commitments: list[Commitment] = []
+        events: list[Event] = []
         seen: set[tuple[str, int]] = set()
         for ap in applied_of(m):
             if not ap.get("ok") or not ap.get("id"):
@@ -128,5 +146,13 @@ def documents(db: Database, limit: int = 200) -> list[Document]:
                 i = db.get_item(key[1])
                 if i:
                     items.append(i)
-        out.append(Document(a, m, entries, items))
+            elif key[0] == "commitment":
+                c = db.get_commitment(key[1])
+                if c:
+                    commitments.append(c)
+            elif key[0] == "event":
+                ev = db.get_event(key[1])
+                if ev:
+                    events.append(ev)
+        out.append(Document(a, m, entries, items, commitments, events))
     return out

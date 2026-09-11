@@ -116,7 +116,8 @@ CREATE TABLE IF NOT EXISTS attachments (
   mime TEXT NOT NULL,
   size INTEGER NOT NULL,
   name TEXT,                        -- the original file name when Telegram gives one
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  description TEXT                  -- what is on it, written by the LLM (`photo` in its result)
 );
 CREATE INDEX IF NOT EXISTS attachments_message ON attachments (message_id);
 
@@ -201,6 +202,7 @@ class Attachment:
     size: int
     name: str | None  # photos have none; a document keeps the name it was sent with
     created_at: str
+    description: str | None  # what is on it, in the LLM's words; None until it answered
 
     @property
     def is_image(self) -> bool:
@@ -429,6 +431,11 @@ class Database:
             # 2026-09-11: photos; the message keeps the Telegram file id, not the file.
             self.conn.execute("ALTER TABLE messages ADD COLUMN photo_file_id TEXT")
             self.conn.commit()
+        columns = {r[1] for r in self.conn.execute("PRAGMA table_info(attachments)")}
+        if "description" not in columns:
+            # 2026-09-11, later that evening: the LLM describes each photo for the web.
+            self.conn.execute("ALTER TABLE attachments ADD COLUMN description TEXT")
+            self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -598,6 +605,14 @@ class Database:
         self.conn.commit()
         return int(cur.lastrowid or 0)
 
+    def describe_attachments(self, message_id: int, description: str) -> None:
+        """The LLM's description of what came with a message; every file of it gets it."""
+        self.conn.execute(
+            "UPDATE attachments SET description = ? WHERE message_id = ?",
+            (description, message_id),
+        )
+        self.conn.commit()
+
     def attachment_by_sha(self, sha256: str) -> Attachment | None:
         row = self.conn.execute(
             "SELECT * FROM attachments WHERE sha256 = ? ORDER BY id LIMIT 1", (sha256,)
@@ -615,7 +630,20 @@ class Database:
         """Every file with the message it came with, newest first."""
         sql = "SELECT * FROM attachments ORDER BY id DESC"
         rows = self.conn.execute(sql + (" LIMIT ?" if limit else ""), (limit,) if limit else ())
-        files = [_attachment(r) for r in rows.fetchall()]
+        return self._with_messages([_attachment(r) for r in rows.fetchall()])
+
+    def search_attachments(self, pattern: str, limit: int = 50) -> list[tuple[Attachment, Message]]:
+        """`pattern` is a casefolded regex (context.word_pattern) over the description and
+        the caption; newest first."""
+        rows = self.conn.execute(
+            "SELECT a.* FROM attachments a JOIN messages m ON m.id = a.message_id"
+            " WHERE ufold(coalesce(a.description, '') || ' ' || m.raw_text) REGEXP ?"
+            " ORDER BY a.id DESC LIMIT ?",
+            (pattern, limit),
+        ).fetchall()
+        return self._with_messages([_attachment(r) for r in rows])
+
+    def _with_messages(self, files: list[Attachment]) -> list[tuple[Attachment, Message]]:
         ids = {a.message_id for a in files}
         if not ids:
             return []

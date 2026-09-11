@@ -121,6 +121,8 @@ def test_llm_result_lines() -> None:
         "[ok] commitment create #1",
     ]
     assert llm_result_lines('{"error": "boom"}') == ["error: boom"]
+    with_photo = '{"output": {"reply": "Ок.", "photo": "Чек на 1 200 грн"}, "applied": []}'
+    assert llm_result_lines(with_photo) == ["photo: Чек на 1 200 грн"]
     cached = '{"model": "m", "usage": {"input_tokens": 5, "output_tokens": 1,'
     cached += ' "cache_read_input_tokens": 2000}}'
     assert llm_result_lines(cached) == ["m: 5 in, 1 out, 2000 from cache"]

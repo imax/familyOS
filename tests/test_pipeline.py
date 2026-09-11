@@ -64,7 +64,11 @@ async def test_pipeline_keeps_the_photo_as_an_attachment(
 ) -> None:
     llm = FakeLlm(
         LlmResult.model_validate(
-            {"reply": "Записав.", "journal": [{"op": "create", "text": "Чек: 1 200 грн"}]}
+            {
+                "reply": "Записав.",
+                "photo": " Чек із «Сільпо» на 1 200 грн. ",
+                "journal": [{"op": "create", "text": "Чек: 1 200 грн"}],
+            }
         )
     )
     store = FileStore(tmp_path / "files")
@@ -74,6 +78,8 @@ async def test_pipeline_keeps_the_photo_as_an_attachment(
     [(a, m)] = db.attachments_with_messages()
     assert m.id == outcome.message_id and m.photo_file_id == "tg-1"
     assert (a.mime, a.size, a.name) == ("image/jpeg", 10, None)
+    assert a.description == "Чек із «Сільпо» на 1 200 грн."
+    assert json.loads(m.llm_result or "")["output"]["photo"] == " Чек із «Сільпо» на 1 200 грн. "
     assert store.path(a.sha256, a.mime).read_bytes() == b"jpeg-bytes"
     [entry] = db.list_entries()
     assert [x.id for x in files_for(db, "entry", [entry])[entry.id]] == [a.id]
@@ -84,6 +90,7 @@ async def test_pipeline_keeps_the_photo_as_an_attachment(
     )
     assert failed.error and len(db.list_attachments()) == 2
     assert db.list_attachments()[1].message_id == failed.message_id
+    assert db.list_attachments()[1].description is None
 
     # no store (tests): the photo is read, not kept
     await Pipeline(db, family, llm, KYIV).handle(oleh, "x", photo=Image(b"gone", "image/jpeg"))

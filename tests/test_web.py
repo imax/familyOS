@@ -151,11 +151,16 @@ def test_web_files_and_documents(db: Database, family: Family, tmp_path: Path) -
         created_by="oleh",
         source_message_id=mid,
     )
+    cid = db.create_commitment(
+        "Записатись на ТО", owner="oleh", created_by="oleh", source_message_id=mid
+    )
     applied = [
         {"kind": "entry", "op": "create", "id": eid, "ok": True},
         {"kind": "item", "op": "create", "id": iid, "ok": True},
+        {"kind": "commitment", "op": "create", "id": cid, "ok": True},
     ]
     db.set_llm_result(mid, json.dumps({"applied": applied}))
+    db.describe_attachments(mid, "Рахунок СТО «Автомайстер» № 1187 від 30.08.2026 на 4 500 грн.")
     lost = db.insert_message("anna", "anna", "", photo_file_id="g")
     db.add_attachment(lost, "0" * 64, "image/jpeg", 1)  # a row whose bytes are not on disk
     client = TestClient(build_web(settings, family, db))
@@ -182,8 +187,10 @@ def test_web_files_and_documents(db: Database, family: Family, tmp_path: Path) -
 
     # under the note (one line: the li is pre-line), on the item page, a mark in item rows
     journal = client.get("/journal", headers=_auth()).text
-    thumb = f'ТО авто: 4 500 грн<div class="files"><a href="/files/{sha}"><img src="/files/{sha}"'
+    thumb = f'ТО авто: 4 500 грн<div class="files"><a href="/files/{sha}" data-image><img src='
     assert thumb in journal
+    assert '<dialog class="lightbox">' in journal and "showModal" in journal
+    assert "e.key === 'Escape'" in journal
     item = client.get(f"/items/{iid}", headers=_auth()).text
     assert f'<img src="/files/{sha}"' in item and "бардачок" in item
     assert "📎" in client.get("/items", headers=_auth()).text
@@ -191,13 +198,26 @@ def test_web_files_and_documents(db: Database, family: Family, tmp_path: Path) -
     search = client.get("/", params={"q": "авто"}, headers=_auth()).text
     assert f'<img src="/files/{sha}"' in search and "📎" in search
 
-    # the Документи tab: every file, newest first, with the caption and what was made of it
+    # the Документи tab: every file, newest first, with the LLM's description, the caption
+    # and what was made of it, of every kind
     docs = client.get("/documents", headers=_auth())
     assert docs.status_code == 200 and 'class="current">Документи' in docs.text
     assert docs.text.index("0" * 64) < docs.text.index(sha)
+    assert "Рахунок СТО «Автомайстер» № 1187" in docs.text
     assert "ТО авто: 4 500 грн" in docs.text and "Сервісна книжка" in docs.text
+    assert "справа ·</span> Записатись на ТО" in docs.text
     assert "«додай у нотатки»" in docs.text and "без запису" in docs.text
+    assert f'<a href="/files/{sha}" data-image>' in docs.text
     assert client.get("/documents").status_code == 401
+
+    # search finds a file by its description or caption, with the same row
+    found = client.get("/", params={"q": "автомайстер"}, headers=_auth()).text
+    assert "Документи · «автомайстер»" in found and "Рахунок СТО «Автомайстер»" in found
+    assert "Записатись на ТО" in found
+    found = client.get("/", params={"q": "нотатки"}, headers=_auth()).text  # the caption
+    assert "Рахунок СТО «Автомайстер»" in found
+    nothing = client.get("/", params={"q": "тренінг"}, headers=_auth()).text
+    assert "Рахунок СТО «Автомайстер»" not in nothing
 
 
 def test_web_refuses_without_configured_auth(db: Database, family: Family) -> None:

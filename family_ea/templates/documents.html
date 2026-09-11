@@ -3,16 +3,6 @@
 {% block body %}
 <h2>Документи</h2>
 <ul class="docs">
-  {% for d in documents %}
-  <li>
-    <a href="/files/{{ d.file.sha256 }}"{% if not d.file.is_image %} target="_blank"{% endif %}>{% if d.file.is_image %}<img src="/files/{{ d.file.sha256 }}" alt="" loading="lazy">{% else %}📄 {{ d.file.name or d.file.mime }}{% endif %}</a>
-    <div>
-      <div class="meta">{{ d.message.user_id | person }}, {{ d.message.created_at | dt }}{% if d.message.raw_text %} · «{{ d.message.raw_text }}»{% endif %}</div>
-      {% for e in d.entries %}<div class="text">{{ e.text }}</div>{% endfor %}
-      {% for i in d.items %}<div><a href="/items/{{ i.id }}">{{ i.name }}</a> <span class="meta">· {{ i.location or "місце невідоме" }}</span></div>{% endfor %}
-      {% if not d.entries and not d.items %}<div class="empty">без запису</div>{% endif %}
-    </div>
-  </li>
-  {% else %}<li class="empty">поки порожньо: надішли боту фото з підписом</li>{% endfor %}
+  {% for d in documents %}{% include "_document.html" %}{% else %}<li class="empty">поки порожньо: надішли боту фото з підписом</li>{% endfor %}
 </ul>
 {% endblock %}

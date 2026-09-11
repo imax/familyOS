@@ -36,7 +36,7 @@ from .context import (
 )
 from .db import Database, Member
 from .family import Family
-from .files import FileStore, documents, files_for
+from .files import FileStore, documents, files_for, search_documents
 from .ical import commitment_ics, event_ics, ics_filename
 
 log = logging.getLogger(__name__)
@@ -158,6 +158,7 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
                     "items": items,
                     "files": files_for(db, "entry", entries),
                     "item_files": files_for(db, "item", items),
+                    "documents": search_documents(db, pattern) if pattern else [],
                 },
             )
         now = datetime.now(settings.tz)

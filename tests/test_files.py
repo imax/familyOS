@@ -4,8 +4,16 @@ of the Документи page."""
 import json
 from pathlib import Path
 
+from family_ea.context import word_pattern
 from family_ea.db import Database
-from family_ea.files import FileStore, applied_of, documents, files_for, sha256_hex
+from family_ea.files import (
+    FileStore,
+    applied_of,
+    documents,
+    files_for,
+    search_documents,
+    sha256_hex,
+)
 
 JPEG = b"\xff\xd8\xff\xe0not-really-a-jpeg"
 
@@ -90,6 +98,12 @@ def test_documents_are_files_newest_first_with_their_records(db: Database) -> No
     gone = db.create_entry("помилкова", "2026-09-11", "oleh", m1)
     db.delete_entry(gone)
     i1 = _item(db, "Сервісна книжка", m1)
+    c1 = db.create_commitment(
+        "Записатись на ТО", owner=None, created_by="oleh", source_message_id=m1
+    )
+    ev = db.create_event(
+        "Тренінг", who=None, created_by="oleh", source_message_id=m1, date_from="2026-09-20"
+    )
     db.set_llm_result(
         m1,
         _applied(
@@ -97,15 +111,29 @@ def test_documents_are_files_newest_first_with_their_records(db: Database) -> No
             ("entry", "create", gone, True),
             ("item", "create", i1, True),
             ("item", "create", i1, True),  # named twice: shown once
-            ("commitment", "create", 7, True),  # not a note or an item
+            ("commitment", "update", c1, True),
+            ("commitment", "update", 999, True),  # unknown id: skipped
+            ("event", "create", ev, True),
+            ("reminder", "create", 3, True),  # not shown
         ),
     )
+    db.describe_attachments(m1, "Рахунок СТО «Автомайстер» на 4 500 грн.")
     m2 = db.insert_message("anna", "anna", "", photo_file_id="f2")
     a2 = db.add_attachment(m2, "b" * 64, "image/png", 3)
 
     docs = documents(db)
     assert [d.file.id for d in docs] == [a2, a1]
-    assert docs[0].message.user_id == "anna" and docs[0].entries == [] and docs[0].items == []
+    assert docs[0].message.user_id == "anna" and not docs[0].has_records
+    assert docs[0].file.description is None
+    assert docs[1].file.description == "Рахунок СТО «Автомайстер» на 4 500 грн."
     assert [e.id for e in docs[1].entries] == [e1]
     assert [i.id for i in docs[1].items] == [i1]
+    assert [c.id for c in docs[1].commitments] == [c1]
+    assert [e.id for e in docs[1].events] == [ev] and docs[1].has_records
     assert documents(db, limit=1)[0].file.id == a2
+
+    # search: the description and the caption, Ukrainian endings included
+    assert [d.file.id for d in search_documents(db, word_pattern("автомайстер"))] == [a1]
+    assert [d.file.id for d in search_documents(db, word_pattern("рахунки"))] == [a1]
+    assert [d.file.id for d in search_documents(db, word_pattern("нотатки"))] == [a1]  # caption
+    assert search_documents(db, word_pattern("тренінг")) == []  # the event is not the file

@@ -54,7 +54,8 @@ family_ea/
   pipeline.py   store (message, then its photo as an attachment) -> context -> LLM -> ops -> reply
   files.py      FileStore (bytes under FILES_DIR by SHA-256, `ab/ab12….jpg`, never rewritten),
                 files_for() (the files under each note/item, from source_message_id and the
-                `applied` log), documents() (the rows of the Документи page)
+                `applied` log), documents() / search_documents() (the rows of the Документи
+                page: file, message, description, every record the message touched)
   transcribe.py OpenAI gpt-4o-transcribe via httpx
   ical.py       an event or dated commitment -> .ics bytes (timed or all-day)
   backup.py     the backup archive: a checked db snapshot + the notes as one Markdown, zipped
@@ -100,9 +101,11 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   `message_id`, before the LLM call, so a failed call loses nothing. That row is the only
   link: a note or an item shows the files of the message that created it and of every
   message whose `applied` log names it (`files.files_for`); no LLM op mentions a file, and
-  «Документи» is a view over `attachments`, not a table. The prompt still makes the record
-  self-contained (the model never sees the photo again), and a photo without a clear
-  caption changes nothing.
+  «Документи» is a view over `attachments`, not a table. The one thing the LLM says about
+  a photo is its description: the top-level `photo` field of the result (always, caption
+  or not), stored as `attachments.description` for browsing and web search. The prompt
+  still makes the record self-contained (the model never sees the photo again), and a
+  photo without a clear caption changes nothing.
 - `messages.chat_with` is the family member whose chat the row belongs to, so bot replies
   and pushes can be attributed in context; `messages.llm_result` holds
   `{model, usage, request_id, output, applied}`, not the bare LLM output.
