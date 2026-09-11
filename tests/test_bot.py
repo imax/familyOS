@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlparse
 from telegram import Chat, Message, Update, User
 
 from family_ea.auth import verify
-from family_ea.bot import build_bot, family_filter, help_text, login_link, with_link
+from family_ea.bot import build_bot, family_filter, help_text, login_link, open_keyboard
 from family_ea.db import Database, Member
 from family_ea.family import Family
 from tests.test_web import _settings
@@ -40,14 +40,16 @@ def test_login_link_signs_the_member_in() -> None:
     settings = _settings(web_url="https://ea.example/")
     member = Member("anna", "Анна", 2)
     link = login_link(settings, member)
-    assert link and link.startswith("https://ea.example/l/") and len(link) < 60
-    token = urlparse(link).path.removeprefix("/l/")
+    assert link and link.startswith("https://ea.example/login?t=")
+    token = parse_qs(urlparse(link).query)["t"][0]
     assert verify("s", token, "link") == "anna"
     assert verify("s", token, "session") is None  # a link cannot be pasted in as a cookie
     with_next = login_link(settings, member, "/facts")
     assert with_next and parse_qs(urlparse(with_next).query)["next"] == ["/facts"]
-    assert with_link("Нічого не висить.", link) == f"Нічого не висить.\n\n{link}"
-    assert with_link("Нічого не висить.", None) == "Нічого не висить."
+    kb = open_keyboard(link)
+    assert kb and kb.inline_keyboard[0][0].text == "Відкрити"
+    assert kb.inline_keyboard[0][0].url == link
+    assert open_keyboard(None) is None
     assert login_link(_settings(web_url=None), member) is None
     assert login_link(_settings(web_url="https://x", web_secret=None), member) is None
 

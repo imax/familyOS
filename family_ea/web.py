@@ -1,7 +1,7 @@
 """Web view: what the system actually stored. Server-rendered; identity comes from the bot.
 
-There is no password. The digest, /today and /web in Telegram end with a short link to
-`/l/<token>`; opening it sets a long-lived signed cookie. Read-only except
+There is no password. `/web` in Telegram (and «Відкрити» under the digest and /today) sends
+a member a link to `/login?t=…`; opening it sets a long-lived signed cookie. Read-only except
 `/facts` and `/family`, the two things a human edits by hand, and the order of undated
 commitments, dragged on the home page. Commitments are closed only through the LLM's
 `close` op (web done/drop was removed).
@@ -95,9 +95,9 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
     async def healthz() -> dict[str, bool]:
         return {"ok": True}
 
-    @app.get("/l/{token}")
+    @app.get("/login")
     async def login(
-        request: Request, token: str, next_path: Annotated[str, Query(alias="next")] = "/"
+        request: Request, t: str = "", next_path: Annotated[str, Query(alias="next")] = "/"
     ) -> Response:
         """The link the bot sent: set the session cookie and go where the link pointed.
 
@@ -108,7 +108,7 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
         target = next_path if next_path.startswith("/") and not next_path.startswith("//") else "/"
         if member_from_cookie(request) is not None:
             return RedirectResponse(target, status_code=303)
-        subject = verify(key, token, "link")
+        subject = verify(key, t, "link")
         member = family.get(subject) if subject else None
         if member is None:
             raise NotLoggedIn("Посилання застаріло. Напиши боту /web, він дасть нове.", 403)

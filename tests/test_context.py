@@ -98,8 +98,7 @@ def test_digest_text(family: Family) -> None:
     text = digest_text(Agenda(), b, family, KYIV)
     assert text == (
         "Справи на сьогодні:\n- Стоматолог (Анна, 10.09 15:30)\n"
-        "Прострочено:\n- Поговорити з Марією (09.09)\n\n"
-        "Нічого не забули?"
+        "Прострочено:\n- Поговорити з Марією (09.09)"
     )
     assert "Купити лампочки" not in text and "[#" not in text  # no undated ones, no ids
 
@@ -134,7 +133,7 @@ def test_today_blocks_and_lines(family: Family) -> None:
     head = today_lines(blocks, "anna")[:2]
     nothing = bucket_commitments([], now)
     assert digest_text(Agenda(), nothing, family, KYIV, today=head) == (
-        "На сьогодні (твоє):\n- вода\n\nНічого не забули?"
+        "На сьогодні (твоє):\n- вода"
     )
     assert digest_text(Agenda(), nothing, family, KYIV, today=[]) is None
 

@@ -346,7 +346,7 @@ def digest_text(
     )
     if not lines:
         return None
-    return "\n".join(lines) + "\n\nНічого не забули?"
+    return "\n".join(lines)
 
 
 # --- timeline -----------------------------------------------------------------

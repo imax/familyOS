@@ -9,7 +9,14 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
-from telegram import BotCommand, LinkPreviewOptions, Message, Update
+from telegram import (
+    BotCommand,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LinkPreviewOptions,
+    Message,
+    Update,
+)
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -34,8 +41,7 @@ TG_MAX_LEN = 4000
 PRIVATE_BOT = "Це приватний сімейний бот."
 REMINDER_INTERVAL = 60  # seconds between checks for due reminders
 REMINDER_MAX_LATE = timedelta(hours=3)  # due longer ago than this (downtime): missed, not sent
-NO_PREVIEW = LinkPreviewOptions(is_disabled=True)  # login links in text: no preview fetch,
-# and no Telegram server opening a link meant for a person
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)  # login links in text: no preview fetch
 COMMANDS = [
     BotCommand("today", "на сьогодні: списки, події, справи, прострочене"),
     BotCommand("web", "відкрити веб-сторінку сім'ї"),
@@ -62,18 +68,21 @@ def help_text(settings: Settings) -> str:
 
 
 def login_link(settings: Settings, member: Member, path: str = "/") -> str | None:
-    """A short link that logs `member` into the web view and opens `path`; None when the web
-    is not configured. Valid for LINK_TTL, then the person asks for a new one with /web."""
+    """A link that logs `member` into the web view and opens `path`; None when the web is
+    not configured. Valid for LINK_TTL, then the person asks for a new one with /web."""
     if not settings.web_url or not settings.web_secret:
         return None
-    token = sign(settings.web_secret, "link", member.id, LINK_TTL)
-    link = f"{settings.web_url.rstrip('/')}/l/{token}"
-    return link if path == "/" else f"{link}?{urlencode({'next': path})}"
+    query = {"t": sign(settings.web_secret, "link", member.id, LINK_TTL)}
+    if path != "/":
+        query["next"] = path
+    return f"{settings.web_url.rstrip('/')}/login?{urlencode(query)}"
 
 
-def with_link(text: str, link: str | None) -> str:
-    """The web link on its own line at the end; the digest, /today and /web end this way."""
-    return f"{text}\n\n{link}" if link else text
+def open_keyboard(link: str | None) -> InlineKeyboardMarkup | None:
+    """«Відкрити» under the digest, /today and /web; None when the web is not configured."""
+    if not link:
+        return None
+    return InlineKeyboardMarkup([[InlineKeyboardButton("Відкрити", url=link)]])
 
 
 def reminder_recipients(r: Reminder, family: Family) -> list[Member]:
@@ -177,8 +186,8 @@ def build_bot(
         return _clip(text) if text else None
 
     async def send_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
-        """The morning job: each member's digest with the web link at the end; silence when
-        there is nothing to say."""
+        """The morning job: each member's digest with «Відкрити» under it; silence when there
+        is nothing to say."""
         now = datetime.now(settings.tz)
         for member in family.members:
             if member.telegram_id is None:
@@ -187,17 +196,15 @@ def build_bot(
             if text is None:
                 log.info("digest: nothing to say to %s today", member.id)
                 continue
+            keyboard = open_keyboard(login_link(settings, member))
             try:
                 sent = await context.bot.send_message(
-                    member.telegram_id,
-                    with_link(text, login_link(settings, member)),
-                    link_preview_options=NO_PREVIEW,
+                    member.telegram_id, text, reply_markup=keyboard
                 )
             except Exception:
                 log.warning("digest: could not message %s", member.id, exc_info=True)
                 continue
-            # Stored like any bot reply (without the link), so the LLM sees what the push
-            # said when they answer.
+            # Stored like any bot reply, so the LLM sees what the push said when they answer.
             mid = db.insert_message("bot", member.id, text)
             db.set_tg_message_id(mid, sent.message_id)
 
@@ -212,19 +219,15 @@ def build_bot(
         await deliver_due_reminders(db, family, datetime.now(UTC), send)
 
     async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """The morning digest, now, with the web link at the end."""
+        """The morning digest, now, with «Відкрити» under it."""
         person = member_of(update)
         assert update.message and person
-        link = login_link(settings, person)
+        keyboard = open_keyboard(login_link(settings, person))
         text = digest(datetime.now(settings.tz), person)
         if text is None:
-            await update.message.reply_text(
-                with_link("Нічого не висить.", link), link_preview_options=NO_PREVIEW
-            )
+            await update.message.reply_text("Нічого не висить.", reply_markup=keyboard)
             return
-        sent = await update.message.reply_text(
-            with_link(text, link), link_preview_options=NO_PREVIEW
-        )
+        sent = await update.message.reply_text(text, reply_markup=keyboard)
         mid = db.insert_message("bot", person.id, text)
         db.set_tg_message_id(mid, sent.message_id)
 
@@ -308,12 +311,9 @@ def build_bot(
             await update.message.reply_text("Веб не налаштовано: потрібні WEB_URL і WEB_SECRET.")
             return
         await update.message.reply_text(
-            with_link(
-                "Веб-сторінка сім'ї: усе, що я записав, по днях. Посилання діє добу; після "
-                "входу браузер пам'ятає тебе.",
-                link,
-            ),
-            link_preview_options=NO_PREVIEW,
+            "Веб-сторінка сім'ї: усе, що я записав, по днях. Посилання діє добу; після "
+            "входу браузер пам'ятає тебе.",
+            reply_markup=open_keyboard(link),
         )
 
     async def stranger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

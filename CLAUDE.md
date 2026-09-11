@@ -49,9 +49,9 @@ family_ea/
   transcribe.py OpenAI gpt-4o-transcribe via httpx
   ical.py       an event or dated commitment -> .ics bytes (timed or all-day)
   bot.py        python-telegram-bot handlers (/start /help /today /debug /facts /web, text,
-                voice), the 08:30 digest job, the per-minute reminder job; the digest,
-                /today and /web end with a short login link
-  web.py        FastAPI + Jinja: GET /l/:token (the bot's link; sets the cookie), GET / (the
+                voice), the 08:30 digest job, the per-minute reminder job, «Відкрити» (a
+                login link) under the digest, /today and /web
+  web.py        FastAPI + Jinja: GET /login?t= (the bot's link; sets the cookie), GET / (the
                 boards, the timeline, the last done ones; ?q= searches), GET /journal (Нотатки, by month), GET /items (Речі:
                 places, recent; ?place= ?owner= list), GET /items/:id (history), GET/POST
                 /facts, GET/POST /family, GET /messages, GET /events/:id.ics,
@@ -98,9 +98,9 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   sent by a per-minute job when `at` comes, to the one member it is for or to everyone.
   Both are stored as bot messages in each recipient's chat so replies to them have
   context. Anything else the bot sends on its own must follow the same two rules.
-- **Web identity comes from the bot.** No passwords: the digest, `/today` and `/web` end
-  with a short signed link (`/l/<token>`, see `auth.py`); opening it sets a year-long signed
-  cookie. Whoever is in `members` can log in; nothing is stored, so removing a member or
+- **Web identity comes from the bot.** No passwords: `/web` (and «Відкрити» under the digest
+  and `/today`) sends a member a signed link, opening it sets a year-long signed cookie.
+  Whoever is in `members` can log in; nothing is stored, so removing a member or
   rotating `WEB_SECRET` is the only revocation.
 - The bot must not promise what the code cannot do. The prompt lists what the bot does
   (digest, reminders, the web link); when a capability is added or removed, that list changes in
