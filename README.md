@@ -44,7 +44,7 @@ config either: the people who talk to the bot are added on the web (`/family`;
 the admin appears there by writing to the bot, and a stranger who writes gets
 the admin a link to add them), stable background goes into *facts*, a free-text
 page you edit on the web, and everything else the bot learns from conversation
-as memories. All names in this repo's docs, prompts, and tests are fictional
+as journal entries (Нотатки). All names in this repo's docs, prompts, and tests are fictional
 placeholders.
 
 ## Deploying

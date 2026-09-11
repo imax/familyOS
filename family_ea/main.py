@@ -139,7 +139,8 @@ def pull(
 
 
 _OP_KIND = {
-    "memories": "memory",
+    "journal": "entry",
+    "memories": "memory",  # rows from before 2026-09-11
     "events": "event",
     "commitments": "commitment",
     "reminders": "reminder",

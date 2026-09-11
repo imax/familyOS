@@ -133,7 +133,7 @@ def test_web_home_is_a_timeline(
     db.create_commitment(
         "Подзвонити газовику Петру", owner=None, created_by="oleh", source_message_id=mid
     )
-    db.create_memory("Газовик Петро", "oleh", mid)
+    db.create_entry("Газовик Петро", "2026-09-10", "oleh", mid)
     client = TestClient(build_web(_settings(), family, db))
 
     home = html.unescape(client.get("/", headers=_auth()).text)  # «п'ятниця» is escaped
@@ -145,11 +145,11 @@ def test_web_home_is_a_timeline(
     assert '<span class="mark">⏰</span>Стоматолог о 15:30' in home and "усім" in home
     assert '<li class="event">' in home and 'href="/events/1.ics"' in home
     assert home.index("<h2>Без дати</h2>") < home.index("☐</span>Подзвонити газовику Петру")
-    assert "Газовик" not in home  # memories have their own page
+    assert "Газовик" not in home  # notes have their own page
     assert 'class="id"' not in home  # database ids are not for people
 
-    memories = client.get("/journal", headers=_auth()).text
-    assert "Газовик Петро" in memories and "Олег" in memories
+    notes = client.get("/journal", headers=_auth()).text
+    assert "<h2>Вересень 2026</h2>" in notes and "Газовик Петро" in notes and "Олег, 10.09" in notes
 
 
 def test_web_home_empty(db: Database, family: Family, monkeypatch: pytest.MonkeyPatch) -> None:

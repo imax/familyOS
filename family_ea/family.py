@@ -1,4 +1,5 @@
-"""The family members who talk to the bot. Everything else about the family lives in memories.
+"""The family members who talk to the bot. Everything else about the family lives in facts and
+the journal.
 
 Only one thing comes from the environment: `ADMIN_USER_ID`, the Telegram id of the person
 who is always let in. Members live in the `members` table and are edited on the web

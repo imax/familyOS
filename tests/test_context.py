@@ -104,7 +104,10 @@ def test_build_context_sections(
 ) -> None:
     monkeypatch.setattr("family_ea.db.utc_now_iso", lambda: "2026-09-09T12:00:00Z")
     mid = db.insert_message("oleh", "oleh", "Газовик Петро ремонтував котел")
-    db.create_memory("Газовик Петро замінив клапан у котлі 9.09", "oleh", mid)
+    db.create_entry("Газовик Петро замінив клапан у котлі", "2026-09-09", "oleh", mid)
+    monkeypatch.setattr("family_ea.db.utc_now_iso", lambda: "2026-07-01T12:00:00Z")
+    db.create_entry("Котел чистили, 800 грн", "2026-07-01", "anna", mid)  # old: search only
+    monkeypatch.setattr("family_ea.db.utc_now_iso", lambda: "2026-09-09T12:00:00Z")
     db.create_commitment(
         "Поговорити з пані Марією",
         owner="oleh",
@@ -117,10 +120,11 @@ def test_build_context_sections(
     now = datetime(2026, 9, 10, 8, 0, tzinfo=KYIV)
     ctx = build_context(db, family, now, oleh, "Хто ремонтував котел?")
     assert "2026-09-10 08:00 (Europe/Kyiv), четвер" in ctx
-    assert "## Сім'я (пишуть боту; решта людей — у memories)\n- oleh: Олег\n- anna: Анна" in ctx
+    assert "## Сім'я (пишуть боту; решта людей — у фактах і нотатках)\n- oleh: Олег" in ctx
     assert "[#1] Поговорити з пані Марією (Олег, 08.09–20.09)" in ctx
     assert "Справи на сьогодні:\n- [#1]" in ctx
     assert "## Події (минулі за 7 днів і всі майбутні)\nнемає" in ctx
-    assert "[#1] 09.09, Олег: Газовик Петро" in ctx
+    assert "## Нотатки (journal) за останні 2 дні\n- [#1] 09.09, Олег: Газовик Петро" in ctx
+    assert "## Старіші нотатки, схожі на повідомлення\n- [#2] 01.07, Анна: Котел чистили" in ctx
     assert "[09.09 15:00] бот → Олег: Записав." in ctx
     assert ctx.rstrip().endswith("від oleh (Олег):\nХто ремонтував котел?")

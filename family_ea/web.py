@@ -27,6 +27,7 @@ from .context import (
     fmt_due,
     fmt_event_when,
     fts_query,
+    group_by_month,
 )
 from .db import Database, Member
 from .family import Family
@@ -127,7 +128,7 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
                     "q": q,
                     "events": db.search_events(q),
                     "commitments": db.search_commitments(q),
-                    "memories": db.search_memories(fts_query(q), limit=50),
+                    "entries": db.search_entries(fts_query(q), limit=50),
                 },
             )
         timeline = build_timeline(
@@ -141,9 +142,9 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
 
     @app.get("/journal", response_class=HTMLResponse, dependencies=[Depends(authed)])
     async def journal(request: Request) -> HTMLResponse:
-        """The memories table, newest first: what the family told the bot to keep."""
+        """What happened, by month, newest first."""
         return templates.TemplateResponse(
-            request, "journal.html", {"memories": db.list_memories(limit=200)}
+            request, "journal.html", {"months": group_by_month(db.list_entries(limit=200))}
         )
 
     @app.get("/inventory", response_class=HTMLResponse, dependencies=[Depends(authed)])

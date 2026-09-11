@@ -40,19 +40,20 @@
   .mark { margin-right: .25rem; }
   .reminder, .reminder .time { color: #888; }
   .rows .meta { display: inline; margin-left: .25rem; }
+  .journal li { white-space: pre-line; }
 </style>
 </head>
 <body>
 {% set path = request.url.path %}
 <nav>
   <a href="/"{% if path == '/' and not q %} class="current"{% endif %}>Задачі</a>
-  <a href="/journal"{% if path == '/journal' %} class="current"{% endif %}>Journal</a>
-  <a href="/inventory"{% if path == '/inventory' %} class="current"{% endif %}>Inventory</a>
+  <a href="/journal"{% if path == '/journal' %} class="current"{% endif %}>Нотатки</a>
+  <a href="/inventory"{% if path == '/inventory' %} class="current"{% endif %}>Інвентар</a>
   <details class="admin">
     <summary>Адмін</summary>
     <div>
       <a href="/facts">Факти</a>
-      <a href="/family">Сім'я</a>
+      <a href="/family">Користувачі</a>
       <a href="/messages">Повідомлення</a>
     </div>
   </details>

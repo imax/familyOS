@@ -22,7 +22,7 @@ class FakeLlm:
 async def test_pipeline_happy_path(db: Database, family: Family, oleh: Member) -> None:
     llm = FakeLlm(
         LlmResult.model_validate(
-            {"reply": "Записав.", "memories": [{"op": "create", "text": "Газовик Петро"}]}
+            {"reply": "Записав.", "journal": [{"op": "create", "text": "Газовик Петро"}]}
         )
     )
     outcome = await Pipeline(db, family, llm, KYIV).handle(
@@ -36,13 +36,13 @@ async def test_pipeline_happy_path(db: Database, family: Family, oleh: Member) -
     assert stored and stored.is_voice and stored.tg_message_id == 10
     result = json.loads(stored.llm_result or "")
     assert result["model"] == "fake-model"
-    assert result["output"]["memories"][0]["text"] == "Газовик Петро"
-    assert result["applied"][0]["kind"] == "memory"
+    assert result["output"]["journal"][0]["text"] == "Газовик Петро"
+    assert result["applied"][0]["kind"] == "entry"
 
     bot_msg = db.get_message(outcome.bot_message_id)
     assert bot_msg and bot_msg.user_id == "bot" and bot_msg.chat_with == "oleh"
     assert bot_msg.raw_text == "Записав."
-    assert [m.text for m in db.list_memories()] == ["Газовик Петро"]
+    assert [e.text for e in db.list_entries()] == ["Газовик Петро"]
 
 
 async def test_pipeline_llm_failure_keeps_message(

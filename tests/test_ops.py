@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from family_ea.db import Database
 from family_ea.family import Family
 from family_ea.llm import LlmResult
@@ -6,8 +8,12 @@ from tests.conftest import KYIV
 
 SPEC_EXAMPLE = {
     "reply": "Записав.",
-    "memories": [
-        {"op": "create", "text": "Газовик Петро замінив клапан у котлі 9.09. Тел +380…"},
+    "journal": [
+        {
+            "op": "create",
+            "text": "газовик Петро замінив клапан у котлі. Тел +380…",
+            "date": "2026-09-09",
+        },
         {"op": "delete", "id": 5},
     ],
     "events": [
@@ -31,7 +37,7 @@ SPEC_EXAMPLE = {
 def test_schema_accepts_spec_example() -> None:
     r = LlmResult.model_validate(SPEC_EXAMPLE)
     assert r.reply == "Записав."
-    assert [m.op for m in r.memories] == ["create", "delete"]
+    assert [j.op for j in r.journal] == ["create", "delete"]
     assert [e.op for e in r.events] == ["create", "cancel"]
     assert LlmResult.model_validate({"reply": "Ок."}).events == []
     assert r.commitments[1].due_at == "2026-09-10T12:30:00Z"
@@ -57,8 +63,10 @@ def test_apply_ops_spec_example(db: Database, family: Family) -> None:
         tz=KYIV,
     )
     by = {(a.kind, a.op): a for a in applied}
-    assert by[("memory", "create")].ok and by[("memory", "create")].id == 1
-    assert by[("memory", "delete")].ok is False  # id 5 never existed
+    assert by[("entry", "create")].ok and by[("entry", "create")].id == 1
+    entry = db.get_entry(1)
+    assert entry and entry.text.startswith("Газовик Петро") and entry.date == "2026-09-09"
+    assert by[("entry", "delete")].ok is False  # id 5 never existed
     assert by[("event", "create")].ok and db.get_event(1).starts_at == "2026-09-10T12:30:00Z"
     assert by[("event", "cancel")].ok is False  # id 9 never existed
     assert by[("commitment", "update")].ok is False
@@ -80,7 +88,7 @@ def test_apply_ops_validates_and_updates(db: Database, family: Family) -> None:
                 {"op": "create", "text": "Щось", "owner": "olia", "due_at": "коли-небудь"},
                 {"op": "create", "text": "   "},
             ],
-            "memories": [{"op": "create", "text": ""}],
+            "journal": [{"op": "create", "text": ""}],
         }
     )
     applied = apply_ops(db, r, author_id="oleh", message_id=mid, family=family, tz=KYIV)
@@ -135,3 +143,45 @@ def test_commitment_window_replaces_time_and_back(db: Database, family: Family) 
     apply([{"op": "update", "id": 1, "text": "Сніданок з командою"}])  # text only: dates untouched
     c = db.get_commitment(1)
     assert c and (c.due_at, c.due_from, c.due_to) == (None, None, "2026-09-19")
+
+
+def test_apply_journal_ops(db: Database, family: Family) -> None:
+    mid = db.insert_message("oleh", "oleh", "...")
+    r = LlmResult.model_validate(
+        {
+            "reply": "",
+            "journal": [
+                {"op": "create", "text": "  зробив ТО: масло, фільтри, 4500 грн"},
+                {"op": "create", "text": "Обід з кумом", "date": "вчора"},
+            ],
+        }
+    )
+    applied = apply_ops(db, r, author_id="oleh", message_id=mid, family=family, tz=KYIV)
+    assert [a.ok for a in applied] == [True, True]
+    today = datetime.now(KYIV).date().isoformat()
+    first, second = db.get_entry(applied[0].id or 0), db.get_entry(applied[1].id or 0)
+    assert first and first.text == "Зробив ТО: масло, фільтри, 4500 грн" and first.date == today
+    assert second and second.date == today and "bad date" in applied[1].note
+
+    r2 = LlmResult.model_validate(
+        {
+            "reply": "",
+            "journal": [
+                {
+                    "op": "update",
+                    "id": first.id,
+                    "text": "зробив ТО: 4800 грн",
+                    "date": "2026-09-10",
+                },
+                {"op": "update", "id": 99, "text": "x"},
+                {"op": "update", "id": second.id},
+                {"op": "delete", "id": second.id},
+            ],
+        }
+    )
+    applied = apply_ops(db, r2, author_id="oleh", message_id=mid, family=family, tz=KYIV)
+    assert [a.ok for a in applied] == [True, False, False, True]
+    assert applied[2].note == "nothing to update"
+    first = db.get_entry(first.id)
+    assert first and first.text == "Зробив ТО: 4800 грн" and first.date == "2026-09-10"
+    assert [e.id for e in db.list_entries()] == [first.id]

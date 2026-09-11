@@ -1,8 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Journal{% endblock %}
+{% block title %}Нотатки{% endblock %}
 {% block body %}
-<h2>Journal (останні {{ memories | length }})</h2>
-<ul>
-  {% for m in memories %}{% include "_memory.html" %}{% else %}<li class="empty">поки порожньо</li>{% endfor %}
+{% for title, entries in months %}
+<h2>{{ title }}</h2>
+<ul class="journal">
+  {% for e in entries %}{% include "_entry.html" %}{% endfor %}
 </ul>
+{% else %}
+<h2>Нотатки</h2>
+<ul><li class="empty">поки порожньо</li></ul>
+{% endfor %}
 {% endblock %}
