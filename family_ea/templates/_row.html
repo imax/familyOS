@@ -1,4 +1,5 @@
-<li class="{{ r.kind }}">
+<li class="{{ r.kind }}"{% if sortable %} data-id="{{ r.id }}"{% endif %}>
+  {%- if sortable %}<span class="grip" title="Потягни, щоб змінити порядок">⋮⋮</span>{% endif %}
   <span class="time{% if r.all_day %} allday{% endif %}">{{ r.time }}</span>
   <span>
     {%- if r.kind == 'commitment' %}<span class="mark">☐</span>{% elif r.kind == 'reminder' %}<span class="mark">⏰</span>{% endif -%}

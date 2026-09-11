@@ -157,6 +157,41 @@ def test_web_home_is_a_timeline(
     assert "<h2>Вересень 2026</h2>" in notes and "Газовик Петро" in notes and "Олег, 10.09" in notes
 
 
+def test_web_undated_order_by_dragging(
+    db: Database, family: Family, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two or more undated rows get a «⋮⋮» handle; the drag posts the ids in their new order."""
+    freeze_web_clock(monkeypatch, NOW)
+    mid = db.insert_message("oleh", "oleh", "...")
+    db.create_commitment(
+        "Квіти",
+        owner="anna",
+        created_by="oleh",
+        source_message_id=mid,
+        due_at="2026-09-11T06:00:00Z",
+    )
+    first = db.create_commitment("Перша", owner=None, created_by="oleh", source_message_id=mid)
+    second = db.create_commitment("Друга", owner=None, created_by="oleh", source_message_id=mid)
+    client = TestClient(build_web(_settings(), family, db))
+
+    home = client.get("/", headers=_auth()).text
+    undated = home[home.index("<h2>Без дати</h2>") :]
+    assert undated.index("Перша") < undated.index("Друга")
+    assert '<ul class="rows sortable">' in undated and f'data-id="{first}"' in undated
+    assert home.count('class="grip"') == 2 == undated.count('class="grip"')  # dated rows: none
+
+    r = client.post("/commitments/order", data={"ids": [second, first]}, headers=_auth())
+    assert r.status_code == 204
+    home = client.get("/", headers=_auth()).text
+    undated = home[home.index("<h2>Без дати</h2>") :]
+    assert undated.index("Друга") < undated.index("Перша")
+    assert client.post("/commitments/order", data={"ids": [first]}).status_code == 401
+
+    db.close_commitment(second, "done")  # one row left: nothing to drag
+    home = client.get("/", headers=_auth()).text
+    assert '<ul class="rows sortable">' not in home and 'class="grip"' not in home
+
+
 def test_web_home_empty(db: Database, family: Family, monkeypatch: pytest.MonkeyPatch) -> None:
     freeze_web_clock(monkeypatch, NOW)
     client = TestClient(build_web(_settings(), family, db))

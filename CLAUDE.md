@@ -54,7 +54,8 @@ family_ea/
                 timeline; ?q= searches), GET /journal (Нотатки, by month), GET /items (Речі:
                 places, recent; ?place= ?owner= list), GET /items/:id (history), GET/POST
                 /facts, GET/POST /family, GET /messages, GET /events/:id.ics,
-                GET /commitments/:id.ics, GET /backup.db (bearer token)
+                GET /commitments/:id.ics, POST /commitments/order (the undated list after
+                a drag), GET /backup.db (bearer token)
   main.py       serve() runs bot + uvicorn in one loop; chat() REPL; pull(); show_log()
 tests/          deterministic; the LLM is faked, nothing hits the network
 ```
@@ -78,7 +79,10 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   `{model, usage, request_id, output, applied}`, not the bare LLM output.
 - **Commitments close only through the LLM `close` op.** Web done/drop buttons were built
   and removed (2026-09-10, ugly); if closing on the web comes back, it must reuse
-  `db.close_commitment`, no parallel logic.
+  `db.close_commitment`, no parallel logic. The one thing the web writes about a
+  commitment is the order of the undated ones (`position`, dragged on the home page,
+  `db.reorder_commitments`); the LLM never sets it, and `open_commitments()` returns that
+  order so the timeline, the digest and the LLM context agree.
 - **Every push is deterministic and stored.** The morning digest renders today's and
   tomorrow's events, then commitments due today and overdue (undated ones only on Mondays),
   no LLM call, and is silent when empty. A reminder is text the LLM wrote at request time,

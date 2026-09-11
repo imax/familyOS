@@ -344,6 +344,7 @@ def build_timeline(
     A thing still running (a multi-day event, an open window) sits on today with «до …»;
     a reminder whose time passed but is still pending (about to be sent) sits on today too.
     Within a day: all-day events, then timed things by time, then untimed commitments.
+    Undated commitments keep the order they come in: `open_commitments()` gives the hand-set one.
     """
     tz = now.tzinfo
     assert isinstance(tz, ZoneInfo)

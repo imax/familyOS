@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS commitments (
   due_at TEXT,                      -- ISO UTC datetime when there is a specific time
   due_from TEXT,                    -- ISO date, soft window start
   due_to TEXT,                      -- ISO date, soft window end
+  position INTEGER,                 -- hand-set order of the undated ones (web); NULL = after them
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL,
   source_message_id INTEGER NOT NULL,
@@ -193,6 +194,7 @@ class Commitment:
     created_at: str
     source_message_id: int
     closed_at: str | None
+    position: int | None = None  # set by dragging on the web; meaningful for undated ones
 
     @property
     def is_open(self) -> bool:
@@ -363,6 +365,11 @@ class Database:
                 " source_message_id, deleted_at FROM memories ORDER BY id;"
                 " DROP TABLE IF EXISTS memories_fts; DROP TABLE memories;"
             )
+        columns = {r[1] for r in self.conn.execute("PRAGMA table_info(commitments)")}
+        if "position" not in columns:
+            # 2026-09-11: undated commitments got a hand-set order, dragged on the web.
+            self.conn.execute("ALTER TABLE commitments ADD COLUMN position INTEGER")
+            self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -859,10 +866,25 @@ class Database:
         return _commitment(row) if row else None
 
     def open_commitments(self) -> list[Commitment]:
+        """Open ones in the family's order: the hand-set positions first (see
+        reorder_commitments), then the rest by id. The timeline, the digest and the LLM
+        context all take this order, so what someone dragged on the web holds everywhere."""
         rows = self.conn.execute(
-            "SELECT * FROM commitments WHERE status = 'open' ORDER BY id"
+            "SELECT * FROM commitments WHERE status = 'open'"
+            " ORDER BY position IS NULL, position, id"
         ).fetchall()
         return [_commitment(r) for r in rows]
+
+    def reorder_commitments(self, ids: list[int]) -> None:
+        """The undated list as someone dragged it on the web: `ids` come first, in this order;
+        every other open commitment (new since that page was drawn, or listed by a stale one)
+        loses its position and follows by id. Ids that are not open are ignored."""
+        self.conn.execute("UPDATE commitments SET position = NULL WHERE status = 'open'")
+        self.conn.executemany(
+            "UPDATE commitments SET position = ? WHERE id = ? AND status = 'open'",
+            [(n, cid) for n, cid in enumerate(ids, start=1)],
+        )
+        self.conn.commit()
 
     def search_commitments(self, pattern: str, limit: int = 50) -> list[Commitment]:
         """`pattern` is a casefolded regex, see `context.word_pattern`."""

@@ -2,8 +2,9 @@
 
 There is no password. `/web` in Telegram (and «Відкрити» under the digest) sends a member
 a link to `/login?t=…`; opening it sets a long-lived signed cookie. Read-only except
-`/facts` and `/family`, the two things a human edits by hand. Commitments are closed only
-through the LLM's `close` op (web done/drop was removed).
+`/facts` and `/family`, the two things a human edits by hand, and the order of undated
+commitments, dragged on the home page. Commitments are closed only through the LLM's
+`close` op (web done/drop was removed).
 """
 
 import json
@@ -202,6 +203,13 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
         if c is None or not c.has_due:
             raise HTTPException(status_code=404, detail="no such dated commitment")
         return ics_response(commitment_ics(c), c.text)
+
+    @app.post("/commitments/order", dependencies=[Depends(authed)])
+    async def commitments_order(ids: Annotated[list[int], Form()]) -> Response:
+        """The «Без дати» list after a drag: every id in its new place. The one thing about
+        a commitment the web writes; the LLM never sets the order."""
+        db.reorder_commitments(ids)
+        return Response(status_code=204)
 
     @app.get("/facts", response_class=HTMLResponse, dependencies=[Depends(authed)])
     async def facts_page(request: Request) -> HTMLResponse:

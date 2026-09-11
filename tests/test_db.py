@@ -62,6 +62,51 @@ def test_memories_table_becomes_the_journal(tmp_path: Path) -> None:
     again.close()
 
 
+def test_commitments_keep_the_order_dragged_on_the_web(db: Database) -> None:
+    mid = db.insert_message("oleh", "oleh", "...")
+
+    def new(text: str) -> int:
+        return db.create_commitment(text, owner=None, created_by="oleh", source_message_id=mid)
+
+    a, b, c = new("a"), new("b"), new("c")
+    assert [x.id for x in db.open_commitments()] == [a, b, c]  # by id until someone drags
+
+    db.reorder_commitments([c, a, 999, b])  # 999: no such commitment, ignored
+    assert [(x.id, x.position) for x in db.open_commitments()] == [(c, 1), (a, 2), (b, 4)]
+    d = new("d")  # new since the page was drawn: after the placed ones
+    assert [x.id for x in db.open_commitments()] == [c, a, b, d]
+
+    db.close_commitment(a, "done")
+    db.reorder_commitments([a, d, c])  # a stale page: a is closed, ignored; b unlisted: last
+    assert [(x.id, x.position) for x in db.open_commitments()] == [(d, 2), (c, 3), (b, None)]
+
+
+def test_commitments_get_a_position_column(tmp_path: Path) -> None:
+    """A database from before the hand-set order has no `position`; the first start adds it."""
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE commitments (id INTEGER PRIMARY KEY, text TEXT NOT NULL, owner TEXT,
+          status TEXT NOT NULL, due_at TEXT, due_from TEXT, due_to TEXT, created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL, source_message_id INTEGER NOT NULL, closed_at TEXT);
+        INSERT INTO commitments VALUES
+          (1, 'Стоматолог', NULL, 'open', NULL, NULL, NULL, 'oleh', '2026-09-10T09:00:00Z', 1,
+           NULL);
+        """
+    )
+    conn.close()
+
+    db = Database(path)
+    assert [(c.id, c.position) for c in db.open_commitments()] == [(1, None)]
+    db.reorder_commitments([1])
+    db.close()
+    again = Database(path)  # the second start finds the column in place
+    c = again.get_commitment(1)
+    assert c and c.position == 1
+    again.close()
+
+
 def test_commitment_lifecycle(db: Database) -> None:
     mid = db.insert_message("anna", "anna", "завтра стоматолог")
     cid = db.create_commitment(
