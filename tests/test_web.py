@@ -203,10 +203,13 @@ def test_web_files_and_documents(db: Database, family: Family, tmp_path: Path) -
     docs = client.get("/documents", headers=_auth())
     assert docs.status_code == 200 and 'class="current">Документи' in docs.text
     assert docs.text.index("0" * 64) < docs.text.index(sha)
-    assert "Рахунок СТО «Автомайстер» № 1187" in docs.text
+    assert '<div class="meta text clamp">Рахунок СТО «Автомайстер» № 1187' in docs.text
+    assert docs.text.index('<div class="caption">додай у нотатки</div>') < docs.text.index(
+        "Рахунок СТО «Автомайстер»"
+    )
     assert "ТО авто: 4 500 грн" in docs.text and "Сервісна книжка" in docs.text
     assert "справа ·</span> Записатись на ТО" in docs.text
-    assert "«додай у нотатки»" in docs.text and "без запису" in docs.text
+    assert "без запису" in docs.text
     assert f'<a href="/files/{sha}" data-image>' in docs.text
     assert client.get("/documents").status_code == 401
 
