@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta
 from itertools import groupby
 from zoneinfo import ZoneInfo
 
-from .db import Commitment, Database, Entry, Event, Item, Member, Message, Reminder
+from .db import Commitment, Database, Entry, Event, Item, Member, Message, Reminder, TodayList
 from .family import Family
 
 RECENT_WINDOW_DAYS = 2  # notes and items this fresh are in every LLM context; older: search
@@ -223,6 +223,68 @@ def reminder_line(r: Reminder, family: Family, tz: ZoneInfo) -> str:
     return f"[нагадування #{r.id}] {fmt_dt(r.at, tz)} {r.text} ({to})"
 
 
+# --- today boards -------------------------------------------------------------
+
+
+def stale_label(iso_utc: str, now: datetime) -> str:
+    """How old a board is: '' when changed today, 'вчора', else '09.09'."""
+    day = parse_iso(iso_utc).astimezone(now.tzinfo).date()
+    if day == now.date():
+        return ""
+    return "вчора" if day == now.date() - timedelta(days=1) else day.strftime("%d.%m")
+
+
+@dataclass(frozen=True)
+class TodayBlock:
+    """One member's board, ready to render; the web and the digest only lay it out."""
+
+    member: str
+    name: str
+    text: str  # '' when there is no board or it was cleared
+    stale: str  # '' when empty or changed today; 'вчора'; '09.09'
+
+
+def today_blocks(
+    lists: dict[str, TodayList], family: Family, viewer: str | None, now: datetime
+) -> list[TodayBlock]:
+    """Every member's board, the viewer's own first."""
+    blocks = []
+    for m in sorted(family.members, key=lambda m: m.id != viewer):
+        board = lists.get(m.id)
+        text = board.text.strip() if board else ""
+        stale = stale_label(board.created_at, now) if board and text else ""
+        blocks.append(TodayBlock(m.id, m.name, text, stale))
+    return blocks
+
+
+def today_lines(blocks: list[TodayBlock], viewer: str) -> list[str]:
+    """The digest's head: 'На сьогодні (твоє):' then the others', a line per line of text.
+    Empty boards are skipped."""
+    lines: list[str] = []
+    for b in blocks:
+        if not b.text:
+            continue
+        who = "твоє" if b.member == viewer else b.name
+        note = f", оновлено {b.stale}" if b.stale else ""
+        lines.append(f"На сьогодні ({who}{note}):")
+        lines += [f"- {ln.strip()}" for ln in b.text.splitlines() if ln.strip()]
+    return lines
+
+
+def today_context_lines(lists: dict[str, TodayList], family: Family, tz: ZoneInfo) -> list[str]:
+    """For the LLM: every member's board with id, name and when it changed; text as kept."""
+    lines = []
+    for m in family.members:
+        board = lists.get(m.id)
+        text = board.text.strip() if board else ""
+        if not board or not text:
+            lines.append(f"- {m.id} ({m.name}): порожньо")
+            continue
+        body = "\n".join(f"  {ln}" for ln in text.splitlines())
+        lines.append(f"- {m.id} ({m.name}), оновлено {fmt_dt(board.created_at, tz)}:\n{body}")
+    return lines
+
+
 # --- digest -------------------------------------------------------------------
 
 
@@ -235,6 +297,7 @@ def _digest_lines(
     with_ids: bool,
     include_open: bool,
     max_open: int,
+    today: list[str],
 ) -> list[str]:
     def ev(e: Event) -> str:
         return f"- {event_line(e, family, tz, with_id=with_ids, with_date=False)}"
@@ -242,7 +305,7 @@ def _digest_lines(
     def cm(c: Commitment) -> str:
         return f"- {commitment_line(c, family, tz, with_id=with_ids)}"
 
-    lines: list[str] = []
+    lines: list[str] = [*today]
     if a.today:
         lines += ["Сьогодні:", *map(ev, a.today)]
     if a.tomorrow:
@@ -260,7 +323,9 @@ def _digest_lines(
 
 def render_digest(a: Agenda, b: Buckets, family: Family, tz: ZoneInfo, max_open: int = 5) -> str:
     """Today / tomorrow / due / overdue / open, with ids, for the LLM context."""
-    lines = _digest_lines(a, b, family, tz, with_ids=True, include_open=True, max_open=max_open)
+    lines = _digest_lines(
+        a, b, family, tz, with_ids=True, include_open=True, max_open=max_open, today=[]
+    )
     return "\n".join(lines) if lines else "нічого"
 
 
@@ -272,12 +337,21 @@ def digest_text(
     *,
     include_open: bool,
     max_open: int = 5,
+    today: list[str] | None = None,
 ) -> str | None:
-    """The morning push: today's and tomorrow's events, today's and overdue commitments,
-    plus undated ones when `include_open`. None when there is nothing to say: an empty
-    morning stays silent. Deterministic on purpose: presentation, not understanding."""
+    """The morning push: the boards (`today`, from today_lines, the recipient's own first),
+    today's and tomorrow's events, today's and overdue commitments, plus undated ones when
+    `include_open`. None when there is nothing to say: an empty morning stays silent.
+    Deterministic on purpose: presentation, not understanding."""
     lines = _digest_lines(
-        a, b, family, tz, with_ids=False, include_open=include_open, max_open=max_open
+        a,
+        b,
+        family,
+        tz,
+        with_ids=False,
+        include_open=include_open,
+        max_open=max_open,
+        today=today or [],
     )
     if not lines:
         return None
@@ -580,6 +654,10 @@ def build_context(db: Database, family: Family, now: datetime, author: Member, t
             "Факти про сім'ю (веде людина, стабільний фон)",
             [facts_text] if facts_text else [],
             empty="поки порожньо",
+        ),
+        section(
+            "Списки на сьогодні (today: дошка кожного, змінюється лише на явне прохання)",
+            today_context_lines(db.current_today_lists(), family, tz),
         ),
         section(
             f"Події (минулі за {PAST_EVENT_DAYS} днів і всі майбутні)",

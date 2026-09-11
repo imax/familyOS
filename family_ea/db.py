@@ -1,4 +1,5 @@
-"""SQLite storage: members, messages, journal, items, events, commitments, reminders, facts.
+"""SQLite storage: members, messages, journal, items, events, commitments, reminders, facts,
+today lists.
 
 One connection, one process, one writer. Original messages are never mutated;
 journal entries are soft-deleted; items are removed (gone) and every change to one writes
@@ -112,6 +113,14 @@ CREATE TABLE IF NOT EXISTS facts (
   text TEXT NOT NULL,
   created_at TEXT NOT NULL,
   created_by TEXT NOT NULL          -- 'web' or a family member id
+);
+
+CREATE TABLE IF NOT EXISTS today_lists (
+  id INTEGER PRIMARY KEY,           -- every change is a new row; the latest per member is current
+  member TEXT NOT NULL,             -- whose «на сьогодні» board
+  text TEXT NOT NULL,               -- free text, as the person keeps it; '' = cleared
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL          -- the member who asked for the change
 );
 
 CREATE TABLE IF NOT EXISTS members (
@@ -250,6 +259,17 @@ class Reminder:
 @dataclass(frozen=True)
 class Facts:
     id: int
+    text: str
+    created_at: str
+    created_by: str
+
+
+@dataclass(frozen=True)
+class TodayList:
+    """One member's «на сьогодні» board: free text kept through the bot, a new row per change."""
+
+    id: int
+    member: str
     text: str
     created_at: str
     created_by: str
@@ -691,6 +711,25 @@ class Database:
 
     def facts_versions(self) -> int:
         return int(self.conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0])
+
+    # --- today lists --------------------------------------------------------
+
+    def current_today_lists(self) -> dict[str, TodayList]:
+        """The latest board of every member who ever had one, by member id."""
+        rows = self.conn.execute(
+            "SELECT * FROM today_lists"
+            " WHERE id IN (SELECT max(id) FROM today_lists GROUP BY member)"
+        ).fetchall()
+        return {r["member"]: TodayList(**dict(r)) for r in rows}
+
+    def save_today_list(self, member: str, text: str, created_by: str) -> int:
+        """Store a new version of `member`'s board. Returns its id."""
+        cur = self.conn.execute(
+            "INSERT INTO today_lists (member, text, created_at, created_by) VALUES (?, ?, ?, ?)",
+            (member, text, utc_now_iso(), created_by),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid or 0)
 
     # --- members ------------------------------------------------------------
 

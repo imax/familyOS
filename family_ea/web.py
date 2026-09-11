@@ -30,6 +30,7 @@ from .context import (
     fmt_event_when,
     fts_query,
     group_by_month,
+    today_blocks,
     word_pattern,
 )
 from .db import Database, Member
@@ -120,8 +121,11 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
         )
         return response
 
-    @app.get("/", response_class=HTMLResponse, dependencies=[Depends(authed)])
-    async def index(request: Request, q: str | None = None) -> HTMLResponse:
+    @app.get("/", response_class=HTMLResponse)
+    async def index(
+        request: Request, member: Annotated[Member, Depends(authed)], q: str | None = None
+    ) -> HTMLResponse:
+        """The boards (the viewer's own first), then the timeline; `?q=` searches instead."""
         if q and q.strip():
             q = q.strip()
             pattern = word_pattern(q)
@@ -136,14 +140,14 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
                     "items": db.search_items(pattern, limit=50) if pattern else [],
                 },
             )
+        now = datetime.now(settings.tz)
         timeline = build_timeline(
-            db.planned_events(),
-            db.open_commitments(),
-            db.pending_reminders(),
-            datetime.now(settings.tz),
-            family,
+            db.planned_events(), db.open_commitments(), db.pending_reminders(), now, family
         )
-        return templates.TemplateResponse(request, "index.html", {"q": "", "timeline": timeline})
+        boards = today_blocks(db.current_today_lists(), family, member.id, now)
+        return templates.TemplateResponse(
+            request, "index.html", {"q": "", "timeline": timeline, "today": boards}
+        )
 
     @app.get("/journal", response_class=HTMLResponse, dependencies=[Depends(authed)])
     async def journal(request: Request) -> HTMLResponse:

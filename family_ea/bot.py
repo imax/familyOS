@@ -30,7 +30,14 @@ from telegram.ext import (
 
 from .auth import LINK_TTL, sign
 from .config import Settings
-from .context import bucket_commitments, build_agenda, digest_text, parse_iso
+from .context import (
+    bucket_commitments,
+    build_agenda,
+    digest_text,
+    parse_iso,
+    today_blocks,
+    today_lines,
+)
 from .db import Commitment, Database, Event, Member, Reminder
 from .family import Family
 from .ical import commitment_ics, event_ics, ics_filename
@@ -46,7 +53,7 @@ REMINDER_INTERVAL = 60  # seconds between checks for due reminders
 REMINDER_MAX_LATE = timedelta(hours=3)  # due longer ago than this (downtime): missed, not sent
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)  # login links in text: no preview fetch
 COMMANDS = [
-    BotCommand("today", "що сьогодні, що прострочено, що висить"),
+    BotCommand("today", "на сьогодні: списки, події, справи, прострочене"),
     BotCommand("web", "відкрити веб-сторінку сім'ї"),
     BotCommand("facts", "факти про сім'ю, які бачить асистент"),
     BotCommand("help", "що вміє бот і його команди"),
@@ -64,8 +71,9 @@ def help_text(settings: Settings) -> str:
     commands = "\n".join(f"/{c.command} — {c.description}" for c in COMMANDS)
     return (
         "Пиши або наговорюй що завгодно: що сталося, що треба зробити, де що лежить. "
-        f"Питай — відповім з того, що знаю. Щоранку о {when} надсилаю дайджест, а нагадую, "
-        f"коли попросиш.\n\nКоманди:\n{commands}"
+        "«На сьогодні: пошта, планка, авто» веде твій список на день; додавай і викреслюй "
+        f"словами, список партнера теж видно. Питай — відповім з того, що знаю. Щоранку о "
+        f"{when} надсилаю дайджест, а нагадую, коли попросиш.\n\nКоманди:\n{commands}"
     )
 
 
@@ -212,11 +220,21 @@ def build_bot(
         )
         db.set_tg_message_id(outcome.bot_message_id, sent.message_id)
 
-    def digest(now: datetime, *, include_open: bool) -> tuple[str, list[Event | Commitment]] | None:
-        """The digest text and the items it lists; the keyboard is built per recipient."""
+    def digest(
+        now: datetime, viewer: Member, *, include_open: bool
+    ) -> tuple[str, list[Event | Commitment]] | None:
+        """The digest for one member (their own board first) and the items it lists."""
         agenda = build_agenda(db.planned_events(), now)
         buckets = bucket_commitments(db.open_commitments(), now)
-        text = digest_text(agenda, buckets, family, settings.tz, include_open=include_open)
+        boards = today_blocks(db.current_today_lists(), family, viewer.id, now)
+        text = digest_text(
+            agenda,
+            buckets,
+            family,
+            settings.tz,
+            include_open=include_open,
+            today=today_lines(boards, viewer.id),
+        )
         if text is None:
             return None
         items: list[Event | Commitment] = [*agenda.today, *agenda.tomorrow]
@@ -224,16 +242,17 @@ def build_bot(
         return _clip(text), items
 
     async def send_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
-        """The morning job: one shared digest to every member; silence when it is empty."""
+        """The morning job: each member's digest; silence when there is nothing to say."""
         now = datetime.now(settings.tz)
-        result = digest(now, include_open=now.weekday() == OPEN_ITEMS_WEEKDAY)
-        if result is None:
-            log.info("digest: nothing to say today")
-            return
-        text, items = result
+        include_open = now.weekday() == OPEN_ITEMS_WEEKDAY
         for member in family.members:
             if member.telegram_id is None:
                 continue
+            result = digest(now, member, include_open=include_open)
+            if result is None:
+                log.info("digest: nothing to say to %s today", member.id)
+                continue
+            text, items = result
             keyboard = digest_keyboard(items, login_link(settings, member))
             try:
                 sent = await context.bot.send_message(
@@ -257,9 +276,10 @@ def build_bot(
         await deliver_due_reminders(db, family, datetime.now(UTC), send)
 
     async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """The digest now, without the undated commitments: those live on the web."""
         person = member_of(update)
         assert update.message and person
-        result = digest(datetime.now(settings.tz), include_open=True)
+        result = digest(datetime.now(settings.tz), person, include_open=False)
         if result is None:
             await update.message.reply_text("Нічого не висить.")
             return

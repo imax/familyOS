@@ -1,4 +1,5 @@
-"""Apply LLM operations to the database: journal, items, events, commitments, reminders.
+"""Apply LLM operations to the database: journal, items, events, commitments, reminders,
+today boards.
 
 Invalid ops (unknown ids, closed items, bad dates, an event without a date, a reminder
 without a time) are ignored and logged, never fatal. Closing a commitment goes through
@@ -22,7 +23,7 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class Applied:
-    kind: str  # 'entry' | 'item' | 'event' | 'commitment' | 'reminder'
+    kind: str  # 'entry' | 'item' | 'event' | 'commitment' | 'reminder' | 'today'
     op: str
     id: int | None
     ok: bool
@@ -392,6 +393,20 @@ def apply_ops(
                     "reminder", "cancel", r.id or None, ok, "" if ok else "not found or not pending"
                 )
             )
+
+    for t in result.today:
+        member = author_id if not t.member else normalize_member(t.member, family)
+        if member is None:
+            applied.append(Applied("today", "set", None, False, f"unknown member {t.member!r}"))
+            continue
+        text = t.text.strip()
+        current = db.current_today_lists().get(member)
+        if (current.text if current else "") == text:
+            applied.append(Applied("today", "set", None, False, "unchanged"))
+            continue
+        tid = db.save_today_list(member, text, author_id)
+        note = "" if member == author_id else f"for {member}"
+        applied.append(Applied("today", "set", tid, True, note))
 
     for a in applied:
         if not a.ok or a.note:

@@ -44,6 +44,34 @@ def test_schema_accepts_spec_example() -> None:
     assert LlmResult.model_validate({"reply": "Ок."}).commitments == []
 
 
+def test_today_op_replaces_a_board(db: Database, family: Family) -> None:
+    mid = db.insert_message("oleh", "oleh", "...")
+
+    def run(payload: list[dict]) -> list:
+        result = LlmResult.model_validate({"reply": "Ок.", "today": payload})
+        return apply_ops(db, result, author_id="oleh", message_id=mid, family=family, tz=KYIV)
+
+    applied = run(
+        [
+            {"text": " сходити на НП, планка "},
+            {"member": "anna", "text": "вода"},
+            {"member": "nobody", "text": "x"},
+        ]
+    )
+    assert [(a.kind, a.op, a.ok, a.note) for a in applied] == [
+        ("today", "set", True, ""),
+        ("today", "set", True, "for anna"),
+        ("today", "set", False, "unknown member 'nobody'"),
+    ]
+    boards = db.current_today_lists()
+    assert boards["oleh"].text == "сходити на НП, планка" and boards["oleh"].created_by == "oleh"
+    assert boards["anna"].text == "вода" and boards["anna"].created_by == "oleh"
+
+    applied = run([{"text": "сходити на НП, планка"}, {"member": "anna", "text": ""}])
+    assert [(a.ok, a.note) for a in applied] == [(False, "unchanged"), (True, "for anna")]
+    assert db.current_today_lists()["anna"].text == ""  # cleared
+
+
 def test_normalize_datetime() -> None:
     assert normalize_datetime("2026-09-10T15:30:00+03:00", KYIV) == "2026-09-10T12:30:00Z"
     assert normalize_datetime("2026-09-10T15:30:00", KYIV) == "2026-09-10T12:30:00Z"

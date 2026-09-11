@@ -1,6 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Задачі{% endblock %}
 {% block body %}
+<h2>На сьогодні</h2>
+<ul class="rows today">
+  {% for b in today %}
+  <li>
+    <span class="meta">{{ b.name }}{% if b.stale %} · оновлено {{ b.stale }}{% endif %}</span>
+    {% if b.text %}<div class="text">{{ b.text }}</div>{% else %}<div class="empty">порожньо</div>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
 {% if timeline.overdue %}
 <h2 class="overdue">Прострочено</h2>
 <ul class="rows overdue">

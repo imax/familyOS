@@ -10,10 +10,13 @@ from family_ea.context import (
     fmt_due,
     fts_query,
     render_digest,
+    stale_label,
     stems,
+    today_blocks,
+    today_lines,
     word_pattern,
 )
-from family_ea.db import Commitment, Database, Member
+from family_ea.db import Commitment, Database, Member, TodayList
 from family_ea.family import Family
 from tests.conftest import KYIV
 
@@ -106,6 +109,51 @@ def test_digest_text(family: Family) -> None:
     assert digest_text(Agenda(), only_undated, family, KYIV, include_open=True)
     assert (
         digest_text(Agenda(), bucket_commitments([], now), family, KYIV, include_open=True) is None
+    )
+
+
+def test_today_blocks_and_lines(family: Family) -> None:
+    now = datetime(2026, 9, 11, 8, 0, tzinfo=KYIV)
+    lists = {
+        "oleh": TodayList(1, "oleh", "сходити на НП\nпланка\n", "2026-09-10T18:00:00Z", "oleh"),
+        "anna": TodayList(2, "anna", "вода", "2026-09-11T04:30:00Z", "anna"),  # this morning
+    }
+    blocks = today_blocks(lists, family, "anna", now)  # the viewer's own first
+    assert [(b.member, b.text, b.stale) for b in blocks] == [
+        ("anna", "вода", ""),
+        ("oleh", "сходити на НП\nпланка", "вчора"),
+    ]
+    assert today_lines(blocks, "anna") == [
+        "На сьогодні (твоє):",
+        "- вода",
+        "На сьогодні (Олег, оновлено вчора):",
+        "- сходити на НП",
+        "- планка",
+    ]
+    assert stale_label("2026-09-01T10:00:00Z", now) == "01.09"
+    empty = today_blocks({}, family, "oleh", now)
+    assert [(b.member, b.text, b.stale) for b in empty] == [("oleh", "", ""), ("anna", "", "")]
+    assert today_lines(empty, "oleh") == []
+
+    head = today_lines(blocks, "anna")[:2]
+    nothing = bucket_commitments([], now)
+    assert digest_text(Agenda(), nothing, family, KYIV, include_open=False, today=head) == (
+        "На сьогодні (твоє):\n- вода\n\nНічого не забули?"
+    )
+    assert digest_text(Agenda(), nothing, family, KYIV, include_open=False, today=[]) is None
+
+
+def test_context_shows_today_boards(
+    db: Database, family: Family, oleh: Member, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("family_ea.db.utc_now_iso", lambda: "2026-09-10T05:12:00Z")
+    db.save_today_list("oleh", "сходити на НП\nпланка", "oleh")
+    now = datetime(2026, 9, 10, 8, 0, tzinfo=KYIV)
+    ctx = build_context(db, family, now, oleh, "привіт")
+    assert (
+        "## Списки на сьогодні (today: дошка кожного, змінюється лише на явне прохання)\n"
+        "- oleh (Олег), оновлено 10.09 08:12:\n  сходити на НП\n  планка\n"
+        "- anna (Анна): порожньо\n" in ctx
     )
 
 

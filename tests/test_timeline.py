@@ -192,6 +192,25 @@ def test_web_undated_order_by_dragging(
     assert '<ul class="rows sortable">' not in home and 'class="grip"' not in home
 
 
+def test_web_home_boards_own_first(
+    db: Database, family: Family, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    freeze_web_clock(monkeypatch, NOW)
+    monkeypatch.setattr("family_ea.db.utc_now_iso", lambda: "2026-09-09T18:00:00Z")  # yesterday
+    db.save_today_list("anna", "помити пічку\nзамовити воду", "anna")
+    client = TestClient(build_web(_settings(), family, db))
+
+    def head(page: str) -> str:
+        return page[page.index("<h2>На сьогодні</h2>") : page.index("<h2>Сьогодні")]
+
+    boards = head(client.get("/", headers=_auth("anna")).text)
+    assert boards.index("Анна") < boards.index("Олег")
+    assert "Анна · оновлено вчора" in boards and "помити пічку\nзамовити воду" in boards
+    assert boards.count("порожньо") == 1  # Олег has no board yet
+    boards = head(client.get("/", headers=_auth()).text)
+    assert boards.index("Олег") < boards.index("Анна")
+
+
 def test_web_home_empty(db: Database, family: Family, monkeypatch: pytest.MonkeyPatch) -> None:
     freeze_web_clock(monkeypatch, NOW)
     client = TestClient(build_web(_settings(), family, db))

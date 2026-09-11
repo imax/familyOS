@@ -2,7 +2,8 @@
 
 Five kinds of output besides the reply: journal entries (what happened), items (things
 and where they are), events (things that happen at a time or on a day and then pass),
-commitments (things to do) and reminders (a message to send someone at a given moment).
+commitments (things to do) and reminders (a message to send someone at a given moment);
+plus `today`, a member's «на сьогодні» board: free text, replaced whole, only when asked.
 """
 
 from __future__ import annotations
@@ -106,6 +107,17 @@ class ReminderOp(BaseModel):
     )
 
 
+# The one thing to do with a board is to replace its text, so there is no `op` field.
+class TodayOp(BaseModel):
+    member: str = Field(
+        default="", description="чий список на сьогодні: id людини; порожньо — автора повідомлення"
+    )
+    text: str = Field(
+        default="",
+        description="повний новий текст списку, як його веде людина; порожньо — очистити список",
+    )
+
+
 class LlmResult(BaseModel):
     reply: str = Field(description="Коротка відповідь людині українською")
     journal: list[JournalOp] = Field(default_factory=list)
@@ -113,6 +125,7 @@ class LlmResult(BaseModel):
     events: list[EventOp] = Field(default_factory=list)
     commitments: list[CommitmentOp] = Field(default_factory=list)
     reminders: list[ReminderOp] = Field(default_factory=list)
+    today: list[TodayOp] = Field(default_factory=list)
 
 
 SYSTEM_PROMPT = """\
@@ -124,13 +137,15 @@ SYSTEM_PROMPT = """\
 
 У контексті є «Факти про сім'ю» — стабільний фон, який веде людина сама: хто є хто, адреси, \
 звички, як до кого звертатись. Спирайся на них, але не редагуй: ти їх не повертаєш. Усе, що \
-людина розповідає, — це journal, items, events, commitments і reminders.
+людина розповідає, — це journal, items, events, commitments і reminders; а «Списки на \
+сьогодні» — дошка кожного, яку ти переписуєш лише на явне прохання (today).
 
 Що ти вмієш, і більше нічого: відповідати в цьому чаті; вести нотатки (journal) і речі \
-(items: що у нас є і де лежить), events, commitments і reminders; щоранку о 08:30 писати \
-кожному дайджест (події на сьогодні й завтра, справи на сьогодні, прострочені, по \
-понеділках ще й без дати); надсилати \
-нагадування в заданий момент; давати кнопку «📅», щоб додати подію в календар телефону. \
+(items: що у нас є і де лежить), events, commitments, reminders і список на сьогодні \
+(today) кожного; щоранку о 08:30 писати кожному дайджест (списки на сьогодні, події на \
+сьогодні й завтра, справи на сьогодні, прострочені, по понеділках ще й без дати); \
+надсилати нагадування в заданий момент; давати кнопку «📅», щоб додати подію в календар \
+телефону. \
 Ти не бачиш, що відбувається (де хто є, кого зустрів), не дзвониш, не пишеш стороннім, не \
 шукаєш в інтернеті. Не обіцяй у reply нічого поза цим списком; якщо просять те, чого не \
 вмієш, скажи, що зробиш натомість.
@@ -192,6 +207,15 @@ offset); due_from / due_to — м'яке вікно в датах. «Завтр�
 commitment, і в reply чесно скажи, що записав як справу і нагадаєш лише в дайджесті. Коли \
 подію переносять чи скасовують, перенеси (update) чи скасуй (cancel) і її нагадування: \
 вони є в контексті з id.
+- today — список на сьогодні: у кожного своя дошка дрібних справ на день («сходити на НП, \
+зробити планку, помити авто»), вільний текст без структури, видно обом. Змінюй її лише \
+коли людина явно говорить про цей список: «на сьогодні: …», «додай у сьогодні …», «прибери \
+зі списку …», «планку зробив, викресли», «очисти список». text — повний новий текст \
+списку: решта пунктів і формулювання людини лишаються як були, зроблене зникає; порожній \
+text очищає список. member — чий список: порожньо — автора; id іншого — коли просять \
+змінити список партнера. Усе інше («сьогодні треба подзвонити газовику», «завтра помити \
+авто») — як і раніше commitment чи подія, не цей список. «Що в мене на сьогодні?» — \
+відповідай з дошки в reply, без операцій.
 
 Правила:
 - Одне повідомлення може дати багато операцій (список із 15 пунктів → 15 операцій) або \

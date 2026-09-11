@@ -36,12 +36,13 @@ family_ea/
                 `session` cookie; `pull` signs a `backup` bearer. Nothing is stored.
   family.py     Family over the members table (+ ADMIN_USER_ID); slugify() makes ids from names
   db.py         SQLite schema + all queries; dataclasses Message/Entry/Item/Event/
-                Commitment/Reminder; item_history is written by the item methods only;
+                Commitment/Reminder/TodayList; item_history is written by the item methods only;
                 _migrate() for what CREATE IF NOT EXISTS cannot express;
                 backup_to() is the online backup behind GET /backup.db
   context.py    deterministic LLM context, event agenda (today/tomorrow/later/recent),
-                commitment buckets (today/overdue/open/later), the digest text, the web
-                timeline (overdue / days / undated), FTS query
+                commitment buckets (today/overdue/open/later), today boards (blocks for the
+                web and the digest head), the digest text, the web timeline (overdue / days /
+                undated), FTS query
   llm.py        pydantic output schema, system prompt, the one messages.parse() call
   ops.py        apply LLM ops to db, with validation and an `applied` log
   pipeline.py   store -> context -> LLM -> ops -> reply
@@ -51,7 +52,7 @@ family_ea/
                 voice), the 08:30 digest job, the per-minute reminder job, «📅» buttons that
                 send an .ics, «Відкрити» (a login link) under the digest and /today
   web.py        FastAPI + Jinja: GET /login?t= (the bot's link; sets the cookie), GET / (the
-                timeline; ?q= searches), GET /journal (Нотатки, by month), GET /items (Речі:
+                boards, then the timeline; ?q= searches), GET /journal (Нотатки, by month), GET /items (Речі:
                 places, recent; ?place= ?owner= list), GET /items/:id (history), GET/POST
                 /facts, GET/POST /family, GET /messages, GET /events/:id.ics,
                 GET /commitments/:id.ics, POST /commitments/order (the undated list after
@@ -73,6 +74,12 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   message, the rest is on the web. Which item a message is about, the LLM decides from
   those candidates (an update with an id, or a question in the reply); there is no
   matching code, and an ambiguous message must change nothing.
+- **The «на сьогодні» board is free text per member, replaced whole.** One `today` op: the
+  LLM returns the new text of one member's board, and only when the person addresses the
+  board explicitly («на сьогодні: …», «додай у сьогодні …»); everything else stays a
+  commitment or an event. Code never parses the board: it is shown as kept (the web, the
+  digest head, the viewer's own first) and versioned like facts. Nothing resets it;
+  staleness is shown («оновлено вчора»), not acted on.
 - **Original messages are never mutated.** `messages.raw_text` is append-only.
 - `messages.chat_with` is the family member whose chat the row belongs to, so bot replies
   and pushes can be attributed in context; `messages.llm_result` holds
@@ -83,9 +90,10 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   commitment is the order of the undated ones (`position`, dragged on the home page,
   `db.reorder_commitments`); the LLM never sets it, and `open_commitments()` returns that
   order so the timeline, the digest and the LLM context agree.
-- **Every push is deterministic and stored.** The morning digest renders today's and
-  tomorrow's events, then commitments due today and overdue (undated ones only on Mondays),
-  no LLM call, and is silent when empty. A reminder is text the LLM wrote at request time,
+- **Every push is deterministic and stored.** The morning digest renders each member's
+  board (own first), today's and tomorrow's events, then commitments due today and overdue
+  (undated ones only on Mondays), no LLM call, and is silent when empty; `/today` is the
+  same without the undated ones. A reminder is text the LLM wrote at request time,
   sent by a per-minute job when `at` comes, to the one member it is for or to everyone.
   Both are stored as bot messages in each recipient's chat so replies to them have
   context. Anything else the bot sends on its own must follow the same two rules.
