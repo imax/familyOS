@@ -21,6 +21,7 @@ ITEM_HITS = 20  # items found by the message's words
 RECENT_MESSAGES = 20
 FTS_LIMIT = 10
 PAST_EVENT_DAYS = 7  # ended events stay in the LLM context this long ("коли був стоматолог?")
+ALL_DAY = "весь день"  # the timeline's label where a time would be
 DEFAULT_EVENT_DURATION = timedelta(hours=1)
 WEEKDAYS_UK = ("понеділок", "вівторок", "середа", "четвер", "п'ятниця", "субота", "неділя")
 MONTHS_UK = (
@@ -294,7 +295,8 @@ class Row:
     kind: str  # 'event' | 'commitment' | 'reminder'
     id: int
     text: str
-    time: str = ""  # '16:00' (a start); '' for an all-day event or an untimed commitment
+    time: str = ""  # '16:00' (a start); ALL_DAY for an all-day event; '' for an untimed commitment
+    all_day: bool = False  # the template styles the label, not a time
     note: str = ""  # 'до 17:00' / 'до 19.09': an end still ahead; the due when overdue
     who: str = ""  # display name; 'усім' for a reminder to everyone; '' when nobody in particular
     ics_url: str | None = None  # «📅»: an event or a dated commitment
@@ -374,7 +376,8 @@ def build_timeline(
             "event",
             e.id,
             e.text,
-            time=f"{start:%H:%M}" if e.starts_at else "",
+            time=f"{start:%H:%M}" if e.starts_at else ALL_DAY,
+            all_day=not e.starts_at,
             note=note,
             who=family.display_name(e.who) if e.who else "",
             ics_url=f"/events/{e.id}.ics",

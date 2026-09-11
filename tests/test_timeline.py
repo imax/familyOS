@@ -83,7 +83,7 @@ def test_build_timeline(family: Family) -> None:
     ]
     today, tomorrow, saturday, october = t.days
     assert [(r.kind, r.id, r.time, r.note) for r in today.rows] == [
-        ("event", 3, "", "до 19.09"),
+        ("event", 3, "весь день", "до 19.09"),
         ("reminder", 2, "08:00", ""),
         ("event", 2, "10:00", ""),
         ("commitment", 3, "", "до 20.09"),
@@ -93,6 +93,7 @@ def test_build_timeline(family: Family) -> None:
         ("commitment", 1, "09:00", "", "Анна"),
         ("event", 1, "15:30", "до 16:30", "Анна"),
     ]
+    assert today.rows[0].all_day and not today.rows[2].all_day
     assert today.rows[1].who == "усім"
     assert tomorrow.rows[1].ics_url == "/commitments/1.ics"
     assert tomorrow.rows[2].ics_url == "/events/1.ics"
@@ -134,6 +135,9 @@ def test_web_home_is_a_timeline(
         "Подзвонити газовику Петру", owner=None, created_by="oleh", source_message_id=mid
     )
     db.create_entry("Газовик Петро", "2026-09-10", "oleh", mid)
+    db.create_event(
+        "Буріння", who=None, created_by="oleh", source_message_id=mid, date_from="2026-09-15"
+    )
     client = TestClient(build_web(_settings(), family, db))
 
     home = html.unescape(client.get("/", headers=_auth()).text)  # «п'ятниця» is escaped
@@ -144,6 +148,7 @@ def test_web_home_is_a_timeline(
     assert "Стоматолог <a" in home and "· до 16:30 · Анна" in home
     assert '<span class="mark">⏰</span>Стоматолог о 15:30' in home and "усім" in home
     assert '<li class="event">' in home and 'href="/events/1.ics"' in home
+    assert 'class="time allday">весь день</span>' in home  # the all-day event on 15.09
     assert home.index("<h2>Без дати</h2>") < home.index("☐</span>Подзвонити газовику Петру")
     assert "Газовик" not in home  # notes have their own page
     assert 'class="id"' not in home  # database ids are not for people
