@@ -1,0 +1,1 @@
+<li><a href="/items/{{ i.id }}">{{ i.name }}</a>{% if i.owner %} <span class="meta">· {{ i.owner }}</span>{% endif %}<div class="meta">{{ i.location or "місце невідоме" }} · {{ i.created_by | person }}, {{ i.updated_at | dt }}</div></li>

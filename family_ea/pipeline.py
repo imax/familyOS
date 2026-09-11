@@ -73,7 +73,7 @@ class Pipeline:
                     "model": call.model,
                     "usage": call.usage,
                     "request_id": call.request_id,
-                    "output": call.result.model_dump(exclude_none=True),
+                    "output": call.result.model_dump(exclude_defaults=True),
                     "applied": [a.as_dict() for a in applied],
                 },
                 ensure_ascii=False,

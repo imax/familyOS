@@ -1,7 +1,8 @@
-"""SQLite storage: members, messages, journal, events, commitments, reminders, facts.
+"""SQLite storage: members, messages, journal, items, events, commitments, reminders, facts.
 
 One connection, one process, one writer. Original messages are never mutated;
-journal entries are soft-deleted; commitments are closed, events are cancelled and reminders
+journal entries are soft-deleted; items are removed (gone) and every change to one writes
+an item_history row; commitments are closed, events are cancelled and reminders
 are sent, missed or cancelled, never removed (a past event simply passes); facts (the
 human-maintained standing context) keep every version; members (who talks to the bot) are
 edited by the admin on the web.
@@ -79,6 +80,32 @@ CREATE TABLE IF NOT EXISTS reminders (
   sent_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS items (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,               -- as people call it; not unique: two boxes of merch, two rows
+  owner TEXT,                       -- whose, a name as written (a child is no member); NULL: shared
+  place TEXT,                       -- coarse location as written («офіс», «дім»); NULL: unknown
+  spot TEXT,                        -- where exactly, free text («сейф», «білий комод на 2 поверсі»)
+  note TEXT,                        -- what else matters: the variant, what is inside, its state
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  source_message_id INTEGER NOT NULL,
+  removed_at TEXT                   -- gone: thrown away, given away, lost
+);
+
+CREATE TABLE IF NOT EXISTS item_history (
+  id INTEGER PRIMARY KEY,
+  item_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,               -- 'created' | 'moved' | 'corrected' | 'gone'
+  place TEXT,                       -- the location after the change
+  spot TEXT,
+  detail TEXT,                      -- what else changed, for people («власник: Оля»)
+  who TEXT NOT NULL,                -- the family member who said it
+  at TEXT NOT NULL,
+  source_message_id INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS facts (
   id INTEGER PRIMARY KEY,           -- every save is a new row; the latest one is current
   text TEXT NOT NULL,
@@ -114,9 +141,14 @@ def _compiled(pattern: str) -> re.Pattern[str]:
     return re.compile(pattern)
 
 
-def _regexp(pattern: str, text: str) -> bool:
+def _regexp(pattern: str, text: str | None) -> bool:
     """SQLite `text REGEXP pattern` via Python's re: Unicode-aware, unlike LIKE."""
-    return _compiled(pattern).search(text) is not None
+    return text is not None and _compiled(pattern).search(text) is not None
+
+
+def _ufold(text: str | None) -> str | None:
+    """Unicode casefold for SQL; NULL stays NULL, as with SQLite's own functions."""
+    return text.casefold() if text is not None else None
 
 
 def utc_now_iso() -> str:
@@ -228,6 +260,43 @@ class Member:
     telegram_id: int | None = None
 
 
+@dataclass(frozen=True)
+class Item:
+    """A tracked thing: one object, a box, a pile of the same stuff; where it is now."""
+
+    id: int
+    name: str
+    owner: str | None
+    place: str | None
+    spot: str | None
+    note: str | None
+    created_by: str
+    created_at: str
+    updated_at: str
+    source_message_id: int
+    removed_at: str | None
+
+    @property
+    def location(self) -> str:
+        """'офіс / сейф', 'офіс', or '' when unknown."""
+        return " / ".join(p for p in (self.place, self.spot) if p)
+
+
+@dataclass(frozen=True)
+class ItemChange:
+    """One row of an item's history."""
+
+    id: int
+    item_id: int
+    kind: str  # 'created' | 'moved' | 'corrected' | 'gone'
+    place: str | None
+    spot: str | None
+    detail: str | None
+    who: str
+    at: str
+    source_message_id: int
+
+
 def _message(row: sqlite3.Row) -> Message:
     d = dict(row)
     d["is_voice"] = bool(d["is_voice"])
@@ -236,6 +305,14 @@ def _message(row: sqlite3.Row) -> Message:
 
 def _entry(row: sqlite3.Row) -> Entry:
     return Entry(**dict(row))
+
+
+def _item(row: sqlite3.Row) -> Item:
+    return Item(**dict(row))
+
+
+def _item_change(row: sqlite3.Row) -> ItemChange:
+    return ItemChange(**dict(row))
 
 
 def _commitment(row: sqlite3.Row) -> Commitment:
@@ -251,6 +328,8 @@ def _reminder(row: sqlite3.Row) -> Reminder:
 
 
 ENTRY_UPDATABLE = ("text", "date")
+ITEM_UPDATABLE = ("name", "owner", "place", "spot", "note")
+ITEM_LABELS = {"name": "назва", "owner": "власник", "note": "примітка"}  # history detail
 COMMITMENT_UPDATABLE = ("text", "owner", "due_at", "due_from", "due_to")
 EVENT_UPDATABLE = ("text", "who", "starts_at", "until", "date_from", "date_to")
 REMINDER_UPDATABLE = ("text", "who", "at")
@@ -264,7 +343,7 @@ class Database:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         # SQLite's LIKE and lower() are ASCII-only; Ukrainian text needs Python's casefold.
-        self.conn.create_function("ufold", 1, str.casefold, deterministic=True)
+        self.conn.create_function("ufold", 1, _ufold, deterministic=True)
         self.conn.create_function("regexp", 2, _regexp, deterministic=True)
         self.conn.executescript(SCHEMA)
         self._migrate()
@@ -429,6 +508,164 @@ class Database:
         if exclude_ids:
             out = [e for e in out if e.id not in exclude_ids]
         return out[:limit]
+
+    # --- items --------------------------------------------------------------
+    # Every change goes through here and writes item_history; callers never touch it.
+
+    def _item_change(
+        self,
+        item_id: int,
+        kind: str,
+        place: str | None,
+        spot: str | None,
+        detail: str | None,
+        who: str,
+        at: str,
+        source_message_id: int,
+    ) -> None:
+        self.conn.execute(
+            "INSERT INTO item_history (item_id, kind, place, spot, detail, who, at,"
+            " source_message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (item_id, kind, place, spot, detail, who, at, source_message_id),
+        )
+
+    def create_item(
+        self,
+        name: str,
+        *,
+        owner: str | None,
+        place: str | None,
+        spot: str | None,
+        note: str | None,
+        created_by: str,
+        source_message_id: int,
+    ) -> int:
+        now = utc_now_iso()
+        cur = self.conn.execute(
+            "INSERT INTO items (name, owner, place, spot, note, created_by, created_at,"
+            " updated_at, source_message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, owner, place, spot, note, created_by, now, now, source_message_id),
+        )
+        item_id = int(cur.lastrowid or 0)
+        self._item_change(item_id, "created", place, spot, None, created_by, now, source_message_id)
+        self.conn.commit()
+        return item_id
+
+    def update_item(
+        self, item_id: int, fields: dict[str, str | None], *, who: str, source_message_id: int
+    ) -> str | None:
+        """Apply what differs from the current row. Returns the history kind written: 'moved'
+        when the location changed, else 'corrected'; None if the item is unknown, gone, or
+        nothing differs."""
+        current = self.get_item(item_id)
+        if current is None or current.removed_at:
+            return None
+        changed = {
+            k: v for k, v in fields.items() if k in ITEM_UPDATABLE and v != getattr(current, k)
+        }
+        if not changed:
+            return None
+        now = utc_now_iso()
+        assignments = ", ".join(f"{k} = ?" for k in changed)
+        self.conn.execute(
+            f"UPDATE items SET {assignments}, updated_at = ? WHERE id = ?",
+            (*changed.values(), now, item_id),
+        )
+        kind = "moved" if "place" in changed or "spot" in changed else "corrected"
+        detail = "; ".join(
+            f"{ITEM_LABELS[k]}: {v or '—'}" for k, v in changed.items() if k in ITEM_LABELS
+        )
+        self._item_change(
+            item_id,
+            kind,
+            changed.get("place", current.place),
+            changed.get("spot", current.spot),
+            detail or None,
+            who,
+            now,
+            source_message_id,
+        )
+        self.conn.commit()
+        return kind
+
+    def remove_item(self, item_id: int, *, who: str, source_message_id: int) -> bool:
+        """The thing is gone: thrown away, given away, lost. False if unknown or already gone."""
+        current = self.get_item(item_id)
+        if current is None or current.removed_at:
+            return False
+        now = utc_now_iso()
+        self.conn.execute(
+            "UPDATE items SET removed_at = ?, updated_at = ? WHERE id = ?", (now, now, item_id)
+        )
+        self._item_change(
+            item_id, "gone", current.place, current.spot, None, who, now, source_message_id
+        )
+        self.conn.commit()
+        return True
+
+    def get_item(self, item_id: int) -> Item | None:
+        row = self.conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        return _item(row) if row else None
+
+    def item_history(self, item_id: int) -> list[ItemChange]:
+        """Newest first."""
+        rows = self.conn.execute(
+            "SELECT * FROM item_history WHERE item_id = ? ORDER BY id DESC", (item_id,)
+        ).fetchall()
+        return [_item_change(r) for r in rows]
+
+    def items_changed_since(self, since_iso: str) -> list[Item]:
+        """Items (not gone) touched at or after `since_iso`, most recently touched first."""
+        rows = self.conn.execute(
+            "SELECT * FROM items WHERE removed_at IS NULL AND updated_at >= ?"
+            " ORDER BY updated_at DESC, id DESC",
+            (since_iso,),
+        ).fetchall()
+        return [_item(r) for r in rows]
+
+    def recent_items(self, limit: int = 10) -> list[Item]:
+        rows = self.conn.execute(
+            "SELECT * FROM items WHERE removed_at IS NULL ORDER BY updated_at DESC, id DESC"
+            " LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [_item(r) for r in rows]
+
+    def list_items(self, *, place: str | None = None, owner: str | None = None) -> list[Item]:
+        """Items (not gone) at a place ('' = no place known) or of an owner; all when neither."""
+        where, params = ["removed_at IS NULL"], []
+        if place == "":
+            where.append("place IS NULL")
+        elif place is not None:
+            where.append("ufold(place) = ufold(?)")
+            params.append(place)
+        if owner:
+            where.append("ufold(owner) = ufold(?)")
+            params.append(owner)
+        rows = self.conn.execute(
+            f"SELECT * FROM items WHERE {' AND '.join(where)} ORDER BY place, spot, name",
+            params,
+        ).fetchall()
+        return [_item(r) for r in rows]
+
+    def search_items(self, pattern: str, limit: int = 20) -> list[Item]:
+        """`pattern` is a casefolded regex (context.word_pattern) over name, owner, place,
+        spot and note of items that are not gone; most recently touched first."""
+        rows = self.conn.execute(
+            "SELECT * FROM items WHERE removed_at IS NULL AND ufold(name || ' '"
+            " || coalesce(owner, '') || ' ' || coalesce(place, '') || ' ' || coalesce(spot, '')"
+            " || ' ' || coalesce(note, '')) REGEXP ? ORDER BY updated_at DESC, id DESC LIMIT ?",
+            (pattern, limit),
+        ).fetchall()
+        return [_item(r) for r in rows]
+
+    def places(self) -> list[tuple[str | None, int]]:
+        """Where things are, with counts, fullest first; None is the count without a place."""
+        rows = self.conn.execute(
+            "SELECT place, COUNT(*) FROM items WHERE removed_at IS NULL GROUP BY place"
+            " ORDER BY COUNT(*) DESC, place"
+        ).fetchall()
+        return [(r[0], r[1]) for r in rows]
 
     # --- facts --------------------------------------------------------------
 

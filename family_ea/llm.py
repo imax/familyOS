@@ -1,8 +1,8 @@
 """The single structured-output call per message. The LLM understands; code executes.
 
-Four kinds of output besides the reply: journal entries (what happened), events (things
-that happen at a time or on a day and then pass), commitments (things to do) and
-reminders (a message to send someone at a given moment).
+Five kinds of output besides the reply: journal entries (what happened), items (things
+and where they are), events (things that happen at a time or on a day and then pass),
+commitments (things to do) and reminders (a message to send someone at a given moment).
 """
 
 from __future__ import annotations
@@ -17,70 +17,91 @@ from pydantic import BaseModel, Field
 log = logging.getLogger(__name__)
 
 
+# Op fields are never `X | None`: every nullable field makes the structured-output grammar
+# bigger, and with five kinds of ops the API rejects the schema («compiled grammar is too
+# large»). '' and 0 mean «not given»; ops.py treats them so.
 class JournalOp(BaseModel):
     op: Literal["create", "update", "delete"]
-    id: int | None = Field(default=None, description="update/delete: id існуючої нотатки")
-    text: str | None = Field(
-        default=None,
+    id: int = Field(default=0, description="update/delete: id існуючої нотатки")
+    text: str = Field(
+        default="",
         description="create/update: повний текст нотатки, з великої літери, без дати на початку",
     )
-    date: str | None = Field(
-        default=None,
+    date: str = Field(
+        default="",
         description="день, про який нотатка, YYYY-MM-DD; за замовчуванням день повідомлення",
+    )
+
+
+class ItemOp(BaseModel):
+    op: Literal["create", "update", "remove"]
+    id: int = Field(default=0, description="update/remove: id існуючої речі з контексту")
+    name: str = Field(
+        default="",
+        description="create/update: коротка назва, як її називають: «Паспорт Олі», «Мерч 2025»",
+    )
+    owner: str = Field(
+        default="", description="чия річ, ім'я як у повідомленні (дитина теж); null — спільна"
+    )
+    place: str = Field(
+        default="",
+        description="грубе місце (квартира, офіс, будинок батьків), як у відомих місцях, якщо є",
+    )
+    spot: str = Field(
+        default="", description="де саме в цьому місці: «сейф», «білий комод на другому поверсі»"
+    )
+    note: str = Field(
+        default="", description="що ще варто знати: варіант, що всередині, стан; не місце"
     )
 
 
 class EventOp(BaseModel):
     op: Literal["create", "update", "cancel"]
-    id: int | None = Field(default=None, description="update/cancel: id існуючої події")
-    text: str | None = Field(default=None, description="create/update: що відбувається")
-    who: str | None = Field(
-        default=None, description="id людини, кого це стосується, або null, якщо всієї сім'ї"
+    id: int = Field(default=0, description="update/cancel: id існуючої події")
+    text: str = Field(default="", description="create/update: що відбувається")
+    who: str = Field(
+        default="", description="id людини, кого це стосується, або null, якщо всієї сім'ї"
     )
-    starts_at: str | None = Field(
-        default=None,
+    starts_at: str = Field(
+        default="",
         description="початок події з часом, ISO 8601 з offset, напр. 2026-09-11T10:00:00+03:00",
     )
-    until: str | None = Field(
-        default=None, description="кінець події з часом, ISO 8601 з offset; null, якщо невідомий"
+    until: str = Field(
+        default="", description="кінець події з часом, ISO 8601 з offset; null, якщо невідомий"
     )
-    date_from: str | None = Field(
-        default=None, description="цілоденна подія: перший день, YYYY-MM-DD"
-    )
-    date_to: str | None = Field(
-        default=None, description="цілоденна подія: останній день включно, YYYY-MM-DD"
+    date_from: str = Field(default="", description="цілоденна подія: перший день, YYYY-MM-DD")
+    date_to: str = Field(
+        default="", description="цілоденна подія: останній день включно, YYYY-MM-DD"
     )
 
 
 class CommitmentOp(BaseModel):
     op: Literal["create", "update", "close"]
-    id: int | None = Field(default=None, description="update/close: id існуючого commitment")
-    text: str | None = Field(default=None, description="create/update: що треба зробити")
-    owner: str | None = Field(
-        default=None, description="id людини (oleh, anna) або null, якщо обидва чи неясно"
+    id: int = Field(default=0, description="update/close: id існуючого commitment")
+    text: str = Field(default="", description="create/update: що треба зробити")
+    owner: str = Field(
+        default="", description="id людини (oleh, anna) або null, якщо обидва чи неясно"
     )
-    due_at: str | None = Field(
-        default=None,
+    due_at: str = Field(
+        default="",
         description="конкретний час, ISO 8601 з offset, напр. 2026-09-10T15:30:00+03:00",
     )
-    due_from: str | None = Field(default=None, description="початок м'якого вікна, YYYY-MM-DD")
-    due_to: str | None = Field(default=None, description="кінець м'якого вікна, YYYY-MM-DD")
-    status: Literal["done", "dropped"] | None = Field(
-        default=None, description="close: done — зроблено, dropped — більше не актуально"
+    due_from: str = Field(default="", description="початок м'якого вікна, YYYY-MM-DD")
+    due_to: str = Field(default="", description="кінець м'якого вікна, YYYY-MM-DD")
+    status: Literal["done", "dropped", ""] = Field(
+        default="", description="close: done — зроблено, dropped — більше не актуально"
     )
 
 
 class ReminderOp(BaseModel):
     op: Literal["create", "update", "cancel"]
-    id: int | None = Field(default=None, description="update/cancel: id існуючого нагадування")
-    text: str | None = Field(
-        default=None, description="create/update: текст нагадування, самодостатній, з часом події"
+    id: int = Field(default=0, description="update/cancel: id існуючого нагадування")
+    text: str = Field(
+        default="", description="create/update: текст нагадування, самодостатній, з часом події"
     )
-    who: str | None = Field(
-        default=None, description="id людини, кому надіслати, або null — усім у сім'ї"
-    )
-    at: str | None = Field(
-        default=None,
+    who: str = Field(default="", description="id людини, кому надіслати, або null — усім у сім'ї")
+    at: str = Field(
+        default="",
         description="коли надіслати, ISO 8601 з offset, напр. 2026-09-11T15:00:00+03:00",
     )
 
@@ -88,6 +109,7 @@ class ReminderOp(BaseModel):
 class LlmResult(BaseModel):
     reply: str = Field(description="Коротка відповідь людині українською")
     journal: list[JournalOp] = Field(default_factory=list)
+    items: list[ItemOp] = Field(default_factory=list)
     events: list[EventOp] = Field(default_factory=list)
     commitments: list[CommitmentOp] = Field(default_factory=list)
     reminders: list[ReminderOp] = Field(default_factory=list)
@@ -102,11 +124,12 @@ SYSTEM_PROMPT = """\
 
 У контексті є «Факти про сім'ю» — стабільний фон, який веде людина сама: хто є хто, адреси, \
 звички, як до кого звертатись. Спирайся на них, але не редагуй: ти їх не повертаєш. Усе, що \
-людина розповідає, — це journal, events, commitments і reminders.
+людина розповідає, — це journal, items, events, commitments і reminders.
 
-Що ти вмієш, і більше нічого: відповідати в цьому чаті; вести нотатки (journal), events, \
-commitments і reminders; щоранку о 08:30 писати кожному дайджест (події на сьогодні й \
-завтра, справи на сьогодні, прострочені, по понеділках ще й без дати); надсилати \
+Що ти вмієш, і більше нічого: відповідати в цьому чаті; вести нотатки (journal) і речі \
+(items: що у нас є і де лежить), events, commitments і reminders; щоранку о 08:30 писати \
+кожному дайджест (події на сьогодні й завтра, справи на сьогодні, прострочені, по \
+понеділках ще й без дати); надсилати \
 нагадування в заданий момент; давати кнопку «📅», щоб додати подію в календар телефону. \
 Ти не бачиш, що відбувається (де хто є, кого зустрів), не дзвониш, не пишеш стороннім, не \
 шукаєш в інтернеті. Не обіцяй у reply нічого поза цим списком; якщо просять те, чого не \
@@ -122,8 +145,28 @@ commitments і reminders; щоранку о 08:30 писати кожному д
 великої літери і без дати на початку: день іде окремим полем date (YYYY-MM-DD), за \
 замовчуванням день повідомлення, «вчора» → вчорашня дата. Нові люди і контакти теж сюди, у \
 нотатку про те, де вони з'явились («Газовик Петро (тел +380…) замінив клапан у котлі»). \
-Заплановане на дату — це events, а не нотатка. У контексті не всі нотатки: лише за останні \
-два дні і схожі на нове повідомлення; решта є на вебі.
+Заплановане на дату — це events, а не нотатка; де що лежить — це items, а не нотатка. У \
+контексті не всі нотатки: лише за останні два дні і схожі на нове повідомлення; решта є на \
+вебі.
+- items — речі: що у нас є, чиє воно і де лежить зараз: документи, ключі, техніка, коробки, \
+запаси, мерч. Один запис — одна одиниця обліку, така, як її називає людина: паспорт, \
+ноутбук, «коробка з кабелями», «мерч, худі 2025». Без кількостей і без ієрархій. name — \
+коротка назва; owner — чия річ, ім'я як у повідомленні (дитина теж), або null, якщо \
+спільна чи не сказано; place — грубе місце (квартира, офіс, будинок батьків), таке, як у \
+«Відомих місцях», якщо є підходяще; spot — де саме («сейф», «білий комод на другому \
+поверсі»); note — що ще варто знати (варіант, що всередині), але не місце. Однакові \
+назви — це нормально: дві коробки мерчу в різних місцях — два записи, кожен зі своєю \
+історією. Різні варіанти однієї речі (мерч 2024 і 2025, худі і футболки) розрізняй у назві \
+чи note так, як їх розрізняє людина, і не зливай в один запис. «Поклав X у Y» про річ, \
+якої нема в контексті, — create; про річ із контексту — update з її id і новими place / \
+spot (spot без місця не переноситься, назви його заново). «Частину X відвіз у Y» — create \
+нового запису з тією ж назвою в Y, старий лишається. Якщо в контексті кілька схожих і \
+неясно, про яку мова, — обери за місцем, звідки забирають, інакше перепитай у reply («Яку \
+саме зарядку — з офісу чи з машини?») і не змінюй нічого. Викинули, віддали, загубили — \
+remove. Reply про зміну речі короткий: «✅ Паспорт Олі → квартира / білий комод». У \
+контексті не всі речі: лише змінені за останні два дні і схожі на повідомлення; на «де \
+X?» відповідай з них («📍 Паспорт Олі — квартира / білий комод»), а якщо нема — так і \
+скажи: «Не знаю. Скажи, де воно, коли знайдеш.» Повний список — на вебі.
 - events — події: щось відбудеться у певний час або день, і туди треба прийти або про це \
 треба знати: зустрічі, візити до лікаря, дні народження, гості, поїздки, табір. Час: \
 starts_at (ISO 8601 з offset) і until, якщо кінець відомий; або date_from / date_to \
@@ -157,8 +200,8 @@ commitment, і в reply чесно скажи, що записав як спра
 відповідай з контексту в reply, без операцій. Якщо в контексті цього нема — так і скажи.
 - Виправлення («ні, не до п'ятниці, а протягом двох тижнів», «Марію закрий», «забудь про \
 газовика») стосуються існуючих записів: знайди їх за id серед подій, нагадувань, \
-відкритих commitments чи нотаток і поверни update / cancel / close / delete. Не створюй \
-дублікат.
+відкритих commitments, нотаток чи речей і поверни update / cancel / close / delete / remove. \
+Не створюй дублікат.
 - Одна подія — один запис. Якщо схожий запис уже є, не дублюй; за потреби update.
 - «Зробила», «попрала», «домовились» про відкритий commitment — це close зі status done. \
 Якщо при цьому є що занотувати (як пройшло, що коштувало, деталі) — ще й create у journal; \

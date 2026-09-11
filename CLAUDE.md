@@ -1,7 +1,7 @@
 # Family EA
 
 Private family assistant in Telegram: two adults throw text and voice at the bot, it keeps
-one shared state (journal, events, commitments, reminders), answers questions from it,
+one shared state (journal, items, events, commitments, reminders), answers questions from it,
 pushes a morning digest and sends reminders at the asked time. Deployed to Fly.io, SQLite on a volume, in real use since 2026-09-10.
 
 `docs/spec-v3.md` is the original spec (Ukrainian). It was retired on 2026-09-10: read it
@@ -35,8 +35,9 @@ family_ea/
   auth.py       signed tokens (HMAC under WEB_SECRET): a `link` from the bot becomes a
                 `session` cookie; `pull` signs a `backup` bearer. Nothing is stored.
   family.py     Family over the members table (+ ADMIN_USER_ID); slugify() makes ids from names
-  db.py         SQLite schema + all queries; dataclasses Message/Entry/Event/Commitment/
-                Reminder; _migrate() for what CREATE IF NOT EXISTS cannot express;
+  db.py         SQLite schema + all queries; dataclasses Message/Entry/Item/Event/
+                Commitment/Reminder; item_history is written by the item methods only;
+                _migrate() for what CREATE IF NOT EXISTS cannot express;
                 backup_to() is the online backup behind GET /backup.db
   context.py    deterministic LLM context, event agenda (today/tomorrow/later/recent),
                 commitment buckets (today/overdue/open/later), the digest text, the web
@@ -50,9 +51,10 @@ family_ea/
                 voice), the 08:30 digest job, the per-minute reminder job, «📅» buttons that
                 send an .ics, «Відкрити» (a login link) under the digest and /today
   web.py        FastAPI + Jinja: GET /login?t= (the bot's link; sets the cookie), GET / (the
-                timeline; ?q= searches), GET /journal (Нотатки, by month), GET /inventory (empty
-                for now), GET/POST /facts, GET/POST /family, GET /messages,
-                GET /events/:id.ics, GET /commitments/:id.ics, GET /backup.db (bearer token)
+                timeline; ?q= searches), GET /journal (Нотатки, by month), GET /items (Речі:
+                places, recent; ?place= ?owner= list), GET /items/:id (history), GET/POST
+                /facts, GET/POST /family, GET /messages, GET /events/:id.ics,
+                GET /commitments/:id.ics, GET /backup.db (bearer token)
   main.py       serve() runs bot + uvicorn in one loop; chat() REPL; pull(); show_log()
 tests/          deterministic; the LLM is faked, nothing hits the network
 ```
@@ -65,9 +67,11 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   time or on a day and then passes (never overdue, only cancelled); a commitment is done or
   dropped and can be overdue. Different lifecycles, different data. The same goes for any
   new kind of thing (reminders): its own table, its own ops.
-- **The journal stays out of the default context.** Entries (Нотатки on the web) can be
-  long and many; the LLM sees only the last two days and the FTS hits for the incoming
-  message, the rest is on the web. Inventory, when it comes, follows the same rule.
+- **Notes and items stay out of the default context.** Both can be long and many; the LLM
+  sees only what changed in the last two days plus the search hits for the incoming
+  message, the rest is on the web. Which item a message is about, the LLM decides from
+  those candidates (an update with an id, or a question in the reply); there is no
+  matching code, and an ambiguous message must change nothing.
 - **Original messages are never mutated.** `messages.raw_text` is append-only.
 - `messages.chat_with` is the family member whose chat the row belongs to, so bot replies
   and pushes can be attributed in context; `messages.llm_result` holds
@@ -131,7 +135,7 @@ The backlog may name code.
 - Three kinds of knowledge, three owners: `members` table (who talks to the bot, the
   Telegram allowlist; only `ADMIN_USER_ID` is env, the admin edits the rest on the web),
   `facts` (stable background about the family; the human edits it on the web, the LLM only
-  reads it), journal/events/commitments/reminders (everything people tell the bot; the LLM writes
+  reads it), journal/items/events/commitments/reminders (everything people tell the bot; the LLM writes
   them).
 - Python 3.12, `uv` for deps, `ruff` for lint/format, `pytest` with `asyncio_mode=auto`.
 - FastAPI modules must not use `from __future__ import annotations`: postponed `Annotated`
@@ -154,3 +158,7 @@ multipart POST in `family_ea/transcribe.py`. That is the only OpenAI usage; the 
 - Model comes from `LLM_MODEL` env; default `claude-sonnet-5` at effort `medium`. Compare
   with `claude-haiku-4-5` once scenario tests exist.
 - No thinking/`budget_tokens` config needed; use `thinking: {type: "adaptive"}` if enabling.
+- Op fields in `llm.py` are never `X | None`: nullable fields inflate the structured-output
+  grammar and the API rejects the schema («compiled grammar is too large»; hit 2026-09-11
+  when items were added). `''` / `0` mean «not given». Test a schema change with `chat`
+  before deploying: the failure is a 400 on every message.

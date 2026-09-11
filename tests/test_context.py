@@ -115,8 +115,26 @@ def test_build_context_sections(
     monkeypatch.setattr("family_ea.db.utc_now_iso", lambda: "2026-09-09T12:00:00Z")
     mid = db.insert_message("oleh", "oleh", "Газовик Петро ремонтував котел")
     db.create_entry("Газовик Петро замінив клапан у котлі", "2026-09-09", "oleh", mid)
+    db.create_item(
+        "Паспорт Олі",
+        owner="Оля",
+        place="квартира",
+        spot="білий комод",
+        note=None,
+        created_by="oleh",
+        source_message_id=mid,
+    )
     monkeypatch.setattr("family_ea.db.utc_now_iso", lambda: "2026-07-01T12:00:00Z")
     db.create_entry("Котел чистили, 800 грн", "2026-07-01", "anna", mid)  # old: search only
+    db.create_item(
+        "Ключі від офісу",
+        owner=None,
+        place="офіс",
+        spot="сейф",
+        note="запасні",
+        created_by="anna",
+        source_message_id=mid,
+    )
     monkeypatch.setattr("family_ea.db.utc_now_iso", lambda: "2026-09-09T12:00:00Z")
     db.create_commitment(
         "Поговорити з пані Марією",
@@ -136,5 +154,10 @@ def test_build_context_sections(
     assert "## Події (минулі за 7 днів і всі майбутні)\nнемає" in ctx
     assert "## Нотатки (journal) за останні 2 дні\n- [#1] 09.09, Олег: Газовик Петро" in ctx
     assert "## Старіші нотатки, схожі на повідомлення\n- [#2] 01.07, Анна: Котел чистили" in ctx
+    assert "## Речі (items), змінені за останні 2 дні\n- [#1] Паспорт Олі (Оля) → квартира" in ctx
+    assert "## Речі, схожі на повідомлення\nнемає" in ctx
+    assert "## Відомі місця (place), де лежать речі\nквартира (1), офіс (1)" in ctx
+    ctx2 = build_context(db, family, now, oleh, "Де ключі від офісу?")
+    assert "## Речі, схожі на повідомлення\n- [#2] Ключі від офісу → офіс / сейф; запасні" in ctx2
     assert "[09.09 15:00] бот → Олег: Записав." in ctx
     assert ctx.rstrip().endswith("від oleh (Олег):\nХто ремонтував котел?")

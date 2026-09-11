@@ -68,6 +68,24 @@ def test_web_pages(db: Database, family: Family) -> None:
         source_message_id=mid,
         date_from="2026-09-20",
     )
+    iid = db.create_item(
+        "Паспорт Олі",
+        owner="Оля",
+        place="квартира",
+        spot="білий комод",
+        note=None,
+        created_by="oleh",
+        source_message_id=mid,
+    )
+    db.create_item(
+        "Мерч",
+        owner=None,
+        place=None,
+        spot=None,
+        note="худі 2025",
+        created_by="anna",
+        source_message_id=mid,
+    )
     client = TestClient(build_web(_settings(), family, db))
 
     assert client.get("/healthz").json() == {"ok": True}
@@ -81,9 +99,18 @@ def test_web_pages(db: Database, family: Family) -> None:
     assert ">Задачі</a>" in home.text and 'class="current">Задачі' in home.text
     assert ">Нотатки</a>" in home.text and ">Користувачі</a>" in home.text
     assert "/memories" not in home.text  # the tab is Нотатки now
-    inventory = client.get("/inventory", headers=_auth())
-    assert inventory.status_code == 200 and 'class="current">Інвентар' in inventory.text
-    assert client.get("/inventory").status_code == 401
+    items = client.get("/items", headers=_auth())
+    assert items.status_code == 200 and 'class="current">Речі' in items.text
+    assert "Паспорт Олі" in items.text and "квартира" in items.text and "Без місця" in items.text
+    place = client.get("/items", params={"place": "квартира"}, headers=_auth()).text
+    assert "<h3>білий комод</h3>" in place and "Мерч" not in place
+    assert "Мерч" in client.get("/items", params={"place": ""}, headers=_auth()).text
+    assert "Паспорт" in client.get("/items", params={"owner": "оля"}, headers=_auth()).text
+    page = client.get(f"/items/{iid}", headers=_auth()).text
+    assert "квартира / білий комод" in page and "з'явилось" in page and "Олег" in page
+    assert client.get("/items/999", headers=_auth()).status_code == 404
+    assert client.get("/items").status_code == 401
+    assert "Паспорт Олі" in client.get("/", params={"q": "паспорта"}, headers=_auth()).text
 
     search = client.get("/", params={"q": "котл"}, headers=_auth())
     assert "нічого" in search.text  # no memory mentions "котл..."

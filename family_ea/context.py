@@ -13,10 +13,11 @@ from datetime import date, datetime, timedelta
 from itertools import groupby
 from zoneinfo import ZoneInfo
 
-from .db import Commitment, Database, Entry, Event, Member, Message, Reminder
+from .db import Commitment, Database, Entry, Event, Item, Member, Message, Reminder
 from .family import Family
 
-JOURNAL_WINDOW_DAYS = 2  # fresher entries are in every LLM context; older ones only via search
+RECENT_WINDOW_DAYS = 2  # notes and items this fresh are in every LLM context; older: search
+ITEM_HITS = 20  # items found by the message's words
 RECENT_MESSAGES = 20
 FTS_LIMIT = 10
 PAST_EVENT_DAYS = 7  # ended events stay in the LLM context this long ("коли був стоматолог?")
@@ -510,6 +511,14 @@ def word_pattern(text: str, max_terms: int = 12) -> str | None:
 # --- context ------------------------------------------------------------------
 
 
+def item_line(i: Item, with_id: bool = True) -> str:
+    """'[#3] Паспорт Олі (Оля) → квартира / білий комод; до 2031'."""
+    head = f"[#{i.id}] " if with_id else ""
+    owner = f" ({i.owner})" if i.owner else ""
+    note = f"; {i.note}" if i.note else ""
+    return f"{head}{i.name}{owner} → {i.location or 'місце невідоме'}{note}"
+
+
 def _entry_line(e: Entry, family: Family) -> str:
     return f"[#{e.id}] {fmt_date(e.date)}, {family.display_name(e.created_by)}: {e.text}"
 
@@ -528,7 +537,7 @@ def build_context(db: Database, family: Family, now: datetime, author: Member, t
     """Assemble everything the LLM needs for one message."""
     tz = now.tzinfo
     assert isinstance(tz, ZoneInfo)
-    since = (now - timedelta(days=JOURNAL_WINDOW_DAYS)).astimezone(ZoneInfo("UTC"))
+    since = (now - timedelta(days=RECENT_WINDOW_DAYS)).astimezone(ZoneInfo("UTC"))
     since_iso = since.isoformat(timespec="seconds").replace("+00:00", "Z")
 
     agenda = build_agenda(db.planned_events(), now)
@@ -540,6 +549,15 @@ def build_context(db: Database, family: Family, now: datetime, author: Member, t
     older_hits = db.search_entries(
         fts_query(text), limit=FTS_LIMIT, exclude_ids={e.id for e in recent_entries}
     )
+    recent_items = db.items_changed_since(since_iso)
+    pattern = word_pattern(text)
+    seen = {i.id for i in recent_items}
+    item_hits = [
+        i
+        for i in (db.search_items(pattern, limit=ITEM_HITS + len(seen)) if pattern else [])
+        if i.id not in seen
+    ][:ITEM_HITS]
+    places = ", ".join(f"{p} ({n})" for p, n in db.places() if p)
     recent_messages = db.recent_messages(RECENT_MESSAGES)
     facts = db.current_facts()
     facts_text = facts.text.strip() if facts else ""
@@ -573,13 +591,19 @@ def build_context(db: Database, family: Family, now: datetime, author: Member, t
         ),
         section("Сьогодні / прострочено", [render_digest(agenda, buckets, family, tz)]),
         section(
-            f"Нотатки (journal) за останні {JOURNAL_WINDOW_DAYS} дні",
+            f"Нотатки (journal) за останні {RECENT_WINDOW_DAYS} дні",
             [f"- {_entry_line(e, family)}" for e in recent_entries],
         ),
         section(
             "Старіші нотатки, схожі на повідомлення",
             [f"- {_entry_line(e, family)}" for e in older_hits],
         ),
+        section(
+            f"Речі (items), змінені за останні {RECENT_WINDOW_DAYS} дні",
+            [f"- {item_line(i)}" for i in recent_items],
+        ),
+        section("Речі, схожі на повідомлення", [f"- {item_line(i)}" for i in item_hits]),
+        section("Відомі місця (place), де лежать речі", [places] if places else [], "поки жодного"),
         section(
             "Останні повідомлення",
             [_message_line(m, family, tz) for m in recent_messages],

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ item.name }}{% endblock %}
+{% block body %}
+<h2>{{ item.name }}{% if item.owner %} <span class="meta">· {{ item.owner }}</span>{% endif %}</h2>
+<p>
+  {% if item.removed_at %}<span class="status-dropped">більше нема</span>{% else %}{{ item.location or "місце невідоме" }}{% endif %}
+  {% if item.note %}<br><span class="meta">{{ item.note }}</span>{% endif %}
+</p>
+<h2>Історія</h2>
+<ul>
+  {% for h in history %}
+  <li>
+    {% if h.kind == 'created' %}з'явилось{% elif h.kind == 'moved' %}переїхало{% elif h.kind == 'corrected' %}виправлено{% else %}більше нема{% endif %}
+    {% if h.kind != 'gone' and (h.place or h.spot) %}→ {{ [h.place, h.spot] | select | join(' / ') }}{% endif %}
+    {% if h.detail %}<span class="meta">· {{ h.detail }}</span>{% endif %}
+    <div class="meta">{{ h.who | person }}, {{ h.at | dt }}</div>
+  </li>
+  {% endfor %}
+</ul>
+{% endblock %}

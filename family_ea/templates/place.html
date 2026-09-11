@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block body %}
+<h2>{{ title }}</h2>
+{% for spot, items in groups %}
+{% if spot %}<h3>{{ spot }}</h3>{% elif groups | length > 1 %}<h3>де саме — невідомо</h3>{% endif %}
+<ul>
+  {% for i in items %}{% include "_item.html" %}{% endfor %}
+</ul>
+{% else %}
+<ul><li class="empty">нічого</li></ul>
+{% endfor %}
+{% endblock %}

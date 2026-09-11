@@ -49,7 +49,7 @@ def test_normalize_datetime() -> None:
     assert normalize_datetime("2026-09-10T15:30:00", KYIV) == "2026-09-10T12:30:00Z"
     assert normalize_datetime("2026-09-10T12:30:00Z", KYIV) == "2026-09-10T12:30:00Z"
     assert normalize_datetime("завтра", KYIV) is None
-    assert normalize_datetime(None, KYIV) is None
+    assert normalize_datetime("", KYIV) is None
 
 
 def test_apply_ops_spec_example(db: Database, family: Family) -> None:
@@ -185,3 +185,57 @@ def test_apply_journal_ops(db: Database, family: Family) -> None:
     first = db.get_entry(first.id)
     assert first and first.text == "Зробив ТО: 4800 грн" and first.date == "2026-09-10"
     assert [e.id for e in db.list_entries()] == [first.id]
+
+
+def test_apply_item_ops(db: Database, family: Family) -> None:
+    mid = db.insert_message("oleh", "oleh", "...")
+    r = LlmResult.model_validate(
+        {
+            "reply": "",
+            "items": [
+                {
+                    "op": "create",
+                    "name": " Паспорт Олі ",
+                    "owner": "Оля",
+                    "place": "офіс",
+                    "spot": "сейф",
+                },
+                {"op": "create", "name": "  "},
+                {"op": "update", "id": 99, "place": "x"},
+            ],
+        }
+    )
+    applied = apply_ops(db, r, author_id="oleh", message_id=mid, family=family, tz=KYIV)
+    assert [(a.ok, a.note) for a in applied] == [
+        (True, ""),
+        (False, "empty name"),
+        (False, "not found, gone or unchanged"),
+    ]
+    iid = applied[0].id or 0
+    assert db.get_item(iid).name == "Паспорт Олі"
+
+    r2 = LlmResult.model_validate(
+        {
+            "reply": "",
+            "items": [
+                {"op": "update", "id": iid, "place": "квартира"},  # the spot goes with the place
+                {"op": "update", "id": iid},
+                {"op": "update", "id": iid, "place": "квартира"},  # nothing new
+                {"op": "update", "id": iid, "name": "", "owner": " "},  # blanks mean «not given»
+                {"op": "remove", "id": iid},
+                {"op": "remove", "id": iid},
+            ],
+        }
+    )
+    applied = apply_ops(db, r2, author_id="anna", message_id=mid, family=family, tz=KYIV)
+    assert [(a.ok, a.note) for a in applied] == [
+        (True, "moved"),
+        (False, "nothing to update"),
+        (False, "not found, gone or unchanged"),
+        (False, "nothing to update"),
+        (True, ""),
+        (False, "not found or already gone"),
+    ]
+    item = db.get_item(iid)
+    assert item and item.place == "квартира" and item.spot is None and item.owner == "Оля"
+    assert item.name == "Паспорт Олі" and item.removed_at

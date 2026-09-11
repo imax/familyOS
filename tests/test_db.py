@@ -101,3 +101,75 @@ def test_messages_order_and_last_user_message(db: Database) -> None:
     assert db.get_message(c).is_voice is True
     db.set_tg_message_id(b, 42)
     assert db.get_message(b).tg_message_id == 42
+
+
+def test_item_lifecycle_writes_history(db: Database) -> None:
+    mid = db.insert_message("oleh", "oleh", "...")
+    a = db.create_item(
+        "Паспорт Олі",
+        owner="Оля",
+        place="офіс",
+        spot="сейф",
+        note=None,
+        created_by="oleh",
+        source_message_id=mid,
+    )
+    b = db.create_item(
+        "Мерч",
+        owner=None,
+        place="офіс",
+        spot="каморка",
+        note="футболки 2024",
+        created_by="anna",
+        source_message_id=mid,
+    )
+    c = db.create_item(
+        "Мерч",
+        owner=None,
+        place="будинок",
+        spot=None,
+        note="худі 2025",
+        created_by="anna",
+        source_message_id=mid,
+    )
+    move = db.update_item(
+        a, {"place": "квартира", "spot": "білий комод"}, who="anna", source_message_id=mid
+    )
+    assert move == "moved"
+    assert db.update_item(a, {"owner": "Оля"}, who="anna", source_message_id=mid) is None  # same
+    fix = db.update_item(
+        a,
+        {"name": "Паспорт Олі (закордонний)", "note": "до 2031"},
+        who="oleh",
+        source_message_id=mid,
+    )
+    assert fix == "corrected"
+    item = db.get_item(a)
+    assert (
+        item and item.location == "квартира / білий комод" and item.name.endswith("(закордонний)")
+    )
+    assert [(h.kind, h.place, h.spot, h.detail, h.who) for h in db.item_history(a)] == [
+        (
+            "corrected",
+            "квартира",
+            "білий комод",
+            "назва: Паспорт Олі (закордонний); примітка: до 2031",
+            "oleh",
+        ),
+        ("moved", "квартира", "білий комод", None, "anna"),
+        ("created", "офіс", "сейф", None, "oleh"),
+    ]
+
+    assert db.places() == [("будинок", 1), ("квартира", 1), ("офіс", 1)]
+    assert [i.id for i in db.list_items(place="ОФІС")] == [b]
+    assert [i.id for i in db.list_items(owner="оля")] == [a]
+    assert sorted(i.id for i in db.search_items(r"\bмерч")) == [b, c]
+    assert [i.id for i in db.search_items(r"\bхуд")] == [c]  # the note is searched too
+    assert sorted(i.id for i in db.items_changed_since("2000-01-01T00:00:00Z")) == [a, b, c]
+
+    assert db.remove_item(b, who="oleh", source_message_id=mid) is True
+    assert db.remove_item(b, who="oleh", source_message_id=mid) is False
+    assert db.update_item(b, {"place": "x"}, who="oleh", source_message_id=mid) is None  # gone
+    assert db.item_history(b)[0].kind == "gone" and db.get_item(b).removed_at
+    assert sorted(i.id for i in db.recent_items()) == [a, c]
+    assert db.list_items(place="офіс") == [] and db.places() == [("будинок", 1), ("квартира", 1)]

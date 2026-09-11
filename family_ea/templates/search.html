@@ -9,6 +9,10 @@
 <ul>
   {% for c in commitments %}{% include "_commitment.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
 </ul>
+<h2>Речі · «{{ q }}»</h2>
+<ul>
+  {% for i in items %}{% include "_item.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
+</ul>
 <h2>Нотатки · «{{ q }}»</h2>
 <ul class="journal">
   {% for e in entries %}{% include "_entry.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}

@@ -1,4 +1,4 @@
-"""Apply LLM operations to the database: journal, events, commitments, reminders.
+"""Apply LLM operations to the database: journal, items, events, commitments, reminders.
 
 Invalid ops (unknown ids, closed items, bad dates, an event without a date, a reminder
 without a time) are ignored and logged, never fatal. Closing a commitment goes through
@@ -15,14 +15,14 @@ from zoneinfo import ZoneInfo
 
 from .db import Database
 from .family import Family
-from .llm import CommitmentOp, EventOp, JournalOp, LlmResult, ReminderOp
+from .llm import CommitmentOp, EventOp, ItemOp, JournalOp, LlmResult, ReminderOp
 
 log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class Applied:
-    kind: str  # 'entry' | 'event' | 'commitment' | 'reminder'
+    kind: str  # 'entry' | 'item' | 'event' | 'commitment' | 'reminder'
     op: str
     id: int | None
     ok: bool
@@ -54,14 +54,15 @@ def normalize_date(value: str | None) -> str | None:
         return None
 
 
-def normalize_member(member_id: str | None, family: Family) -> str | None:
-    if member_id is None:
+def normalize_member(member_id: str, family: Family) -> str | None:
+    if not member_id:
         return None
     return member_id if any(p.id == member_id for p in family.members) else None
 
 
-def _text(value: str | None) -> str | None:
-    return value.strip() if value is not None and value.strip() else None
+def _text(value: str) -> str | None:
+    """Trimmed, or None when nothing was given."""
+    return value.strip() or None
 
 
 def _entry_fields(j: JournalOp) -> tuple[dict, list[str]]:
@@ -70,12 +71,25 @@ def _entry_fields(j: JournalOp) -> tuple[dict, list[str]]:
     notes: list[str] = []
     if (text := _text(j.text)) is not None:
         fields["text"] = text[:1].upper() + text[1:]
-    if j.date is not None:
+    if j.date:
         value = normalize_date(j.date)
         if value is None:
             notes.append(f"bad date {j.date!r} dropped")
         else:
             fields["date"] = value
+    return fields, notes
+
+
+def _item_fields(i: ItemOp) -> tuple[dict, list[str]]:
+    """Fields given on the op, trimmed. A new place without a spot clears the old spot:
+    «переклав у квартиру» rarely means the same shelf."""
+    fields: dict[str, str | None] = {}
+    notes: list[str] = []
+    for name in ("name", "owner", "place", "spot", "note"):
+        if (value := _text(getattr(i, name))) is not None:
+            fields[name] = value
+    if "place" in fields and "spot" not in fields:
+        fields["spot"] = None
     return fields, notes
 
 
@@ -85,12 +99,12 @@ def _commitment_fields(c: CommitmentOp, family: Family, tz: ZoneInfo) -> tuple[d
     notes: list[str] = []
     if (text := _text(c.text)) is not None:
         fields["text"] = text
-    if c.owner is not None:
+    if c.owner:
         owner = normalize_member(c.owner, family)
         if owner is None:
             notes.append(f"unknown owner {c.owner!r} -> null")
         fields["owner"] = owner
-    if c.due_at is not None:
+    if c.due_at:
         due_at = normalize_datetime(c.due_at, tz)
         if due_at is None:
             notes.append(f"bad due_at {c.due_at!r} dropped")
@@ -98,7 +112,7 @@ def _commitment_fields(c: CommitmentOp, family: Family, tz: ZoneInfo) -> tuple[d
             fields["due_at"] = due_at
     for name in ("due_from", "due_to"):
         raw = getattr(c, name)
-        if raw is not None:
+        if raw:
             value = normalize_date(raw)
             if value is None:
                 notes.append(f"bad {name} {raw!r} dropped")
@@ -119,14 +133,14 @@ def _event_fields(e: EventOp, family: Family, tz: ZoneInfo) -> tuple[dict, list[
     notes: list[str] = []
     if (text := _text(e.text)) is not None:
         fields["text"] = text
-    if e.who is not None:
+    if e.who:
         who = normalize_member(e.who, family)
         if who is None:
             notes.append(f"unknown who {e.who!r} -> null")
         fields["who"] = who
     for name in ("starts_at", "until"):
         raw = getattr(e, name)
-        if raw is not None:
+        if raw:
             value = normalize_datetime(raw, tz)
             if value is None:
                 notes.append(f"bad {name} {raw!r} dropped")
@@ -134,7 +148,7 @@ def _event_fields(e: EventOp, family: Family, tz: ZoneInfo) -> tuple[dict, list[
                 fields[name] = value
     for name in ("date_from", "date_to"):
         raw = getattr(e, name)
-        if raw is not None:
+        if raw:
             value = normalize_date(raw)
             if value is None:
                 notes.append(f"bad {name} {raw!r} dropped")
@@ -157,12 +171,12 @@ def _reminder_fields(r: ReminderOp, family: Family, tz: ZoneInfo) -> tuple[dict,
     notes: list[str] = []
     if (text := _text(r.text)) is not None:
         fields["text"] = text
-    if r.who is not None:
+    if r.who:
         who = normalize_member(r.who, family)
         if who is None:
             notes.append(f"unknown who {r.who!r} -> null")
         fields["who"] = who
-    if r.at is not None:
+    if r.at:
         at = normalize_datetime(r.at, tz)
         if at is None:
             notes.append(f"bad at {r.at!r} dropped")
@@ -206,15 +220,54 @@ def apply_ops(
             applied.append(Applied("entry", "create", eid, True, "; ".join(notes)))
         elif j.op == "update":
             if not fields:
-                applied.append(Applied("entry", "update", j.id, False, "nothing to update"))
+                applied.append(Applied("entry", "update", j.id or None, False, "nothing to update"))
                 continue
-            ok = j.id is not None and db.update_entry(j.id, **fields)
+            ok = bool(j.id) and db.update_entry(j.id, **fields)
             note = "; ".join(notes) if ok else "not found or deleted"
-            applied.append(Applied("entry", "update", j.id, ok, note))
+            applied.append(Applied("entry", "update", j.id or None, ok, note))
         elif j.op == "delete":
-            ok = j.id is not None and db.delete_entry(j.id)
+            ok = bool(j.id) and db.delete_entry(j.id)
             applied.append(
-                Applied("entry", "delete", j.id, ok, "" if ok else "not found or already deleted")
+                Applied(
+                    "entry",
+                    "delete",
+                    j.id or None,
+                    ok,
+                    "" if ok else "not found or already deleted",
+                )
+            )
+
+    for i in result.items:
+        fields, notes = _item_fields(i)
+        if i.op == "create":
+            if "name" not in fields:
+                applied.append(Applied("item", "create", None, False, "empty name"))
+                continue
+            iid = db.create_item(
+                fields["name"] or "",
+                owner=fields.get("owner"),
+                place=fields.get("place"),
+                spot=fields.get("spot"),
+                note=fields.get("note"),
+                created_by=author_id,
+                source_message_id=message_id,
+            )
+            applied.append(Applied("item", "create", iid, True, "; ".join(notes)))
+        elif i.op == "update":
+            if not fields:
+                applied.append(Applied("item", "update", i.id or None, False, "nothing to update"))
+                continue
+            kind = None
+            if i.id:
+                kind = db.update_item(i.id, fields, who=author_id, source_message_id=message_id)
+            note = "; ".join([kind, *notes]) if kind else "not found, gone or unchanged"
+            applied.append(Applied("item", "update", i.id or None, kind is not None, note))
+        elif i.op == "remove":
+            ok = bool(i.id) and db.remove_item(i.id, who=author_id, source_message_id=message_id)
+            applied.append(
+                Applied(
+                    "item", "remove", i.id or None, ok, "" if ok else "not found or already gone"
+                )
             )
 
     for e in result.events:
@@ -239,20 +292,24 @@ def apply_ops(
             )
             applied.append(Applied("event", "create", eid, True, "; ".join(notes)))
         elif e.op == "update":
-            existing = db.get_event(e.id) if e.id is not None else None
+            existing = db.get_event(e.id) if e.id else None
             if existing is None or not existing.is_planned:
-                applied.append(Applied("event", "update", e.id, False, "not found or not planned"))
+                applied.append(
+                    Applied("event", "update", e.id or None, False, "not found or not planned")
+                )
                 continue
             if not fields:
-                applied.append(Applied("event", "update", e.id, False, "nothing to update"))
+                applied.append(Applied("event", "update", e.id or None, False, "nothing to update"))
                 continue
             _check_until(fields, fields.get("starts_at", existing.starts_at), existing.until, notes)
             ok = db.update_event(existing.id, **fields)
-            applied.append(Applied("event", "update", e.id, ok, "; ".join(notes)))
+            applied.append(Applied("event", "update", e.id or None, ok, "; ".join(notes)))
         elif e.op == "cancel":
-            ok = e.id is not None and db.cancel_event(e.id)
+            ok = bool(e.id) and db.cancel_event(e.id)
             applied.append(
-                Applied("event", "cancel", e.id, ok, "" if ok else "not found or not planned")
+                Applied(
+                    "event", "cancel", e.id or None, ok, "" if ok else "not found or not planned"
+                )
             )
 
     for c in result.commitments:
@@ -273,18 +330,26 @@ def apply_ops(
             )
             applied.append(Applied("commitment", "create", cid, True, note))
         elif c.op == "update":
-            if c.id is None or not fields:
-                applied.append(Applied("commitment", "update", c.id, False, "nothing to update"))
+            if not c.id or not fields:
+                applied.append(
+                    Applied("commitment", "update", c.id or None, False, "nothing to update")
+                )
                 continue
             ok = db.update_commitment(c.id, **fields)
             applied.append(
-                Applied("commitment", "update", c.id, ok, note if ok else "not found or not open")
+                Applied(
+                    "commitment",
+                    "update",
+                    c.id or None,
+                    ok,
+                    note if ok else "not found or not open",
+                )
             )
         elif c.op == "close":
             status = c.status or "done"
-            ok = c.id is not None and db.close_commitment(c.id, status)
+            ok = bool(c.id) and db.close_commitment(c.id, status)
             note = "" if ok else "not found or not open"
-            applied.append(Applied("commitment", f"close:{status}", c.id, ok, note))
+            applied.append(Applied("commitment", f"close:{status}", c.id or None, ok, note))
 
     for r in result.reminders:
         fields, notes = _reminder_fields(r, family, tz)
@@ -305,17 +370,27 @@ def apply_ops(
             )
             applied.append(Applied("reminder", "create", rid, True, note))
         elif r.op == "update":
-            if r.id is None or not fields:
-                applied.append(Applied("reminder", "update", r.id, False, "nothing to update"))
+            if not r.id or not fields:
+                applied.append(
+                    Applied("reminder", "update", r.id or None, False, "nothing to update")
+                )
                 continue
             ok = db.update_reminder(r.id, **fields)
             applied.append(
-                Applied("reminder", "update", r.id, ok, note if ok else "not found or not pending")
+                Applied(
+                    "reminder",
+                    "update",
+                    r.id or None,
+                    ok,
+                    note if ok else "not found or not pending",
+                )
             )
         elif r.op == "cancel":
-            ok = r.id is not None and db.cancel_reminder(r.id)
+            ok = bool(r.id) and db.cancel_reminder(r.id)
             applied.append(
-                Applied("reminder", "cancel", r.id, ok, "" if ok else "not found or not pending")
+                Applied(
+                    "reminder", "cancel", r.id or None, ok, "" if ok else "not found or not pending"
+                )
             )
 
     for a in applied:

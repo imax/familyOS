@@ -140,6 +140,7 @@ def pull(
 
 _OP_KIND = {
     "journal": "entry",
+    "items": "item",
     "memories": "memory",  # rows from before 2026-09-11
     "events": "event",
     "commitments": "commitment",

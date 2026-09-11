@@ -16,6 +16,7 @@
                background: #fff; border: 1px solid #ddd; border-radius: .4rem; box-shadow: 0 2px 8px rgba(0, 0, 0, .08); }
   .admin a { display: block; padding: .35rem 1rem; }
   h2 { font-size: 1.05rem; margin: 1.5rem 0 .5rem; border-bottom: 1px solid #ddd; padding-bottom: .25rem; }
+  h3 { font-size: .95rem; margin: 1rem 0 .25rem; color: #555; font-weight: 600; }
   ul { list-style: none; padding: 0; margin: 0; }
   li { padding: .35rem 0; border-bottom: 1px solid #f0f0f0; }
   .meta { color: #777; font-size: .85rem; }
@@ -48,7 +49,7 @@
 <nav>
   <a href="/"{% if path == '/' and not q %} class="current"{% endif %}>Задачі</a>
   <a href="/journal"{% if path == '/journal' %} class="current"{% endif %}>Нотатки</a>
-  <a href="/inventory"{% if path == '/inventory' %} class="current"{% endif %}>Інвентар</a>
+  <a href="/items"{% if path.startswith('/items') %} class="current"{% endif %}>Речі</a>
   <details class="admin">
     <summary>Адмін</summary>
     <div>

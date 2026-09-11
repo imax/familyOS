@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Речі{% endblock %}
+{% block body %}
+<h2>Місця</h2>
+<ul>
+  {% for place, n in places %}
+  <li><a href="/items?place={{ place or '' }}">{{ place or 'Без місця' }}</a> <span class="meta">· {{ n }}</span></li>
+  {% else %}<li class="empty">поки порожньо: скажи боту, де що лежить</li>{% endfor %}
+</ul>
+{% if recent %}
+<h2>Нещодавно змінені</h2>
+<ul>
+  {% for i in recent %}{% include "_item.html" %}{% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

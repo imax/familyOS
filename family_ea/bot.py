@@ -63,7 +63,7 @@ def help_text(settings: Settings) -> str:
     when = settings.digest_time.strftime("%H:%M")
     commands = "\n".join(f"/{c.command} — {c.description}" for c in COMMANDS)
     return (
-        "Пиши або наговорюй що завгодно: що сталося, що треба зробити, кого як звати. "
+        "Пиши або наговорюй що завгодно: що сталося, що треба зробити, де що лежить. "
         f"Питай — відповім з того, що знаю. Щоранку о {when} надсилаю дайджест, а нагадую, "
         f"коли попросиш.\n\nКоманди:\n{commands}"
     )

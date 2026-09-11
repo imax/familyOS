@@ -10,6 +10,7 @@ import json
 import logging
 import tempfile
 from datetime import datetime
+from itertools import groupby
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlencode
@@ -131,6 +132,7 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
                     "events": db.search_events(pattern) if pattern else [],
                     "commitments": db.search_commitments(pattern) if pattern else [],
                     "entries": db.search_entries(fts_query(q), limit=50),
+                    "items": db.search_items(pattern, limit=50) if pattern else [],
                 },
             )
         timeline = build_timeline(
@@ -149,10 +151,35 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
             request, "journal.html", {"months": group_by_month(db.list_entries(limit=200))}
         )
 
-    @app.get("/inventory", response_class=HTMLResponse, dependencies=[Depends(authed)])
-    async def inventory(request: Request) -> HTMLResponse:
-        """A tab reserved for what the family owns; nothing is stored behind it yet."""
-        return templates.TemplateResponse(request, "inventory.html", {})
+    @app.get("/items", response_class=HTMLResponse, dependencies=[Depends(authed)])
+    async def items_page(
+        request: Request, place: str | None = None, owner: str | None = None
+    ) -> HTMLResponse:
+        """Where things are: places with counts and what changed lately; `?place=` (empty:
+        no place known) lists a place by spot, `?owner=` one person's things."""
+        if place is None and not owner:
+            return templates.TemplateResponse(
+                request,
+                "items.html",
+                {"recent": db.recent_items(10), "places": db.places()},
+            )
+        items = db.list_items(place=place, owner=owner)
+        if place is not None:
+            title = place or "Без місця"
+            groups = [(spot, list(g)) for spot, g in groupby(items, key=lambda i: i.spot)]
+        else:
+            title = f"Речі: {owner}"
+            groups = [(None, items)] if items else []
+        return templates.TemplateResponse(request, "place.html", {"title": title, "groups": groups})
+
+    @app.get("/items/{iid:int}", response_class=HTMLResponse, dependencies=[Depends(authed)])
+    async def item_page(request: Request, iid: int) -> HTMLResponse:
+        item = db.get_item(iid)
+        if item is None:
+            raise HTTPException(status_code=404, detail="no such item")
+        return templates.TemplateResponse(
+            request, "item.html", {"item": item, "history": db.item_history(iid)}
+        )
 
     def ics_response(data: bytes, text: str) -> Response:
         """Open the file and the phone calendar offers to add the event."""
