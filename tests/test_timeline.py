@@ -148,7 +148,7 @@ def test_web_home_is_a_timeline(
     assert "Газовик" not in home  # memories have their own page
     assert 'class="id"' not in home  # database ids are not for people
 
-    memories = client.get("/memories", headers=_auth()).text
+    memories = client.get("/journal", headers=_auth()).text
     assert "Газовик Петро" in memories and "Олег" in memories
 
 

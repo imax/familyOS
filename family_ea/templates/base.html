@@ -7,6 +7,7 @@
 <style>
   body { font: 15px/1.45 system-ui, sans-serif; max-width: 52rem; margin: 1.5rem auto; padding: 0 1rem; color: #222; overflow-wrap: anywhere; }
   nav { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1.5rem; }
+  nav a.current { color: #222; text-decoration: none; font-weight: 600; }
   nav form { margin-left: auto; }
   nav input[type=search] { font: inherit; padding: .3rem .4rem; width: 9rem; max-width: 100%; box-sizing: border-box; }
   .admin { position: relative; }
@@ -42,14 +43,16 @@
 </style>
 </head>
 <body>
+{% set path = request.url.path %}
 <nav>
-  <a href="/">Головна</a>
+  <a href="/"{% if path == '/' and not q %} class="current"{% endif %}>Задачі</a>
+  <a href="/journal"{% if path == '/journal' %} class="current"{% endif %}>Journal</a>
+  <a href="/inventory"{% if path == '/inventory' %} class="current"{% endif %}>Inventory</a>
   <details class="admin">
     <summary>Адмін</summary>
     <div>
       <a href="/facts">Факти</a>
       <a href="/family">Сім'я</a>
-      <a href="/memories">Memories</a>
       <a href="/messages">Повідомлення</a>
     </div>
   </details>

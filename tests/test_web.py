@@ -67,7 +67,12 @@ def test_web_pages(db: Database, family: Family) -> None:
     home = client.get("/", headers=_auth())
     assert home.status_code == 200
     assert "Стоматолог" in home.text and "Анна" in home.text
-    assert "Газовик" in client.get("/memories", headers=_auth()).text
+    assert "Газовик" in client.get("/journal", headers=_auth()).text
+    assert ">Задачі</a>" in home.text and 'class="current">Задачі' in home.text
+    assert "/memories" not in home.text  # the tab is Journal now
+    inventory = client.get("/inventory", headers=_auth())
+    assert inventory.status_code == 200 and 'class="current">Inventory' in inventory.text
+    assert client.get("/inventory").status_code == 401
 
     search = client.get("/", params={"q": "котл"}, headers=_auth())
     assert "нічого" in search.text  # no memory mentions "котл..."

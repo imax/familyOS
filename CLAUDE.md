@@ -49,9 +49,9 @@ family_ea/
                 voice), the 08:30 digest job, the per-minute reminder job, «📅» buttons that
                 send an .ics, «Відкрити» (a login link) under the digest and /today
   web.py        FastAPI + Jinja: GET /login?t= (the bot's link; sets the cookie), GET / (the
-                timeline; ?q= searches), GET/POST /facts, GET/POST /family, GET /memories,
-                GET /messages, GET /events/:id.ics, GET /commitments/:id.ics,
-                GET /backup.db (bearer token)
+                timeline; ?q= searches), GET /journal (memories), GET /inventory (empty
+                for now), GET/POST /facts, GET/POST /family, GET /messages,
+                GET /events/:id.ics, GET /commitments/:id.ics, GET /backup.db (bearer token)
   main.py       serve() runs bot + uvicorn in one loop; chat() REPL; pull(); show_log()
 tests/          deterministic; the LLM is faked, nothing hits the network
 ```

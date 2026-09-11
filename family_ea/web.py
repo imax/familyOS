@@ -139,11 +139,17 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
         )
         return templates.TemplateResponse(request, "index.html", {"q": "", "timeline": timeline})
 
-    @app.get("/memories", response_class=HTMLResponse, dependencies=[Depends(authed)])
-    async def memories_page(request: Request) -> HTMLResponse:
+    @app.get("/journal", response_class=HTMLResponse, dependencies=[Depends(authed)])
+    async def journal(request: Request) -> HTMLResponse:
+        """The memories table, newest first: what the family told the bot to keep."""
         return templates.TemplateResponse(
-            request, "memories.html", {"memories": db.list_memories(limit=200)}
+            request, "journal.html", {"memories": db.list_memories(limit=200)}
         )
+
+    @app.get("/inventory", response_class=HTMLResponse, dependencies=[Depends(authed)])
+    async def inventory(request: Request) -> HTMLResponse:
+        """A tab reserved for what the family owns; nothing is stored behind it yet."""
+        return templates.TemplateResponse(request, "inventory.html", {})
 
     def ics_response(data: bytes, text: str) -> Response:
         """Open the file and the phone calendar offers to add the event."""
