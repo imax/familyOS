@@ -9,9 +9,11 @@ edited by the admin on the web.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 
 SCHEMA = """
@@ -105,6 +107,16 @@ CREATE TRIGGER IF NOT EXISTS journal_au AFTER UPDATE OF text ON journal BEGIN
   INSERT INTO journal_fts(rowid, text) VALUES (new.id, new.text);
 END;
 """
+
+
+@lru_cache(maxsize=64)
+def _compiled(pattern: str) -> re.Pattern[str]:
+    return re.compile(pattern)
+
+
+def _regexp(pattern: str, text: str) -> bool:
+    """SQLite `text REGEXP pattern` via Python's re: Unicode-aware, unlike LIKE."""
+    return _compiled(pattern).search(text) is not None
 
 
 def utc_now_iso() -> str:
@@ -253,6 +265,7 @@ class Database:
         self.conn.execute("PRAGMA journal_mode=WAL")
         # SQLite's LIKE and lower() are ASCII-only; Ukrainian text needs Python's casefold.
         self.conn.create_function("ufold", 1, str.casefold, deterministic=True)
+        self.conn.create_function("regexp", 2, _regexp, deterministic=True)
         self.conn.executescript(SCHEMA)
         self._migrate()
         self.conn.commit()
@@ -548,10 +561,11 @@ class Database:
         ).fetchall()
         return [_event(r) for r in rows]
 
-    def search_events(self, q: str, limit: int = 50) -> list[Event]:
+    def search_events(self, pattern: str, limit: int = 50) -> list[Event]:
+        """`pattern` is a casefolded regex, see `context.word_pattern`."""
         rows = self.conn.execute(
-            "SELECT * FROM events WHERE ufold(text) LIKE ? ORDER BY id DESC LIMIT ?",
-            (f"%{q.casefold()}%", limit),
+            "SELECT * FROM events WHERE ufold(text) REGEXP ? ORDER BY id DESC LIMIT ?",
+            (pattern, limit),
         ).fetchall()
         return [_event(r) for r in rows]
 
@@ -613,10 +627,11 @@ class Database:
         ).fetchall()
         return [_commitment(r) for r in rows]
 
-    def search_commitments(self, q: str, limit: int = 50) -> list[Commitment]:
+    def search_commitments(self, pattern: str, limit: int = 50) -> list[Commitment]:
+        """`pattern` is a casefolded regex, see `context.word_pattern`."""
         rows = self.conn.execute(
-            "SELECT * FROM commitments WHERE ufold(text) LIKE ? ORDER BY id DESC LIMIT ?",
-            (f"%{q.casefold()}%", limit),
+            "SELECT * FROM commitments WHERE ufold(text) REGEXP ? ORDER BY id DESC LIMIT ?",
+            (pattern, limit),
         ).fetchall()
         return [_commitment(r) for r in rows]
 

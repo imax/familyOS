@@ -58,6 +58,16 @@ def test_web_pages(db: Database, family: Family) -> None:
         source_message_id=mid,
         due_from="2000-01-01",
     )
+    db.create_commitment(
+        "Купити дітям взуття", owner=None, created_by="oleh", source_message_id=mid
+    )
+    db.create_event(
+        "Колі до стоматолога",
+        who="anna",
+        created_by="anna",
+        source_message_id=mid,
+        date_from="2026-09-20",
+    )
     client = TestClient(build_web(_settings(), family, db))
 
     assert client.get("/healthz").json() == {"ok": True}
@@ -79,6 +89,11 @@ def test_web_pages(db: Database, family: Family) -> None:
     assert "нічого" in search.text  # no memory mentions "котл..."
     search = client.get("/", params={"q": "газов"}, headers=_auth())
     assert "замінив клапан" in search.text and 'class="id"' not in search.text
+    search = client.get("/", params={"q": "діти"}, headers=_auth())  # inflection
+    assert "дітям взуття" in search.text and "Колі" not in search.text
+    search = client.get("/", params={"q": "Коля"}, headers=_auth())
+    assert "Колі до стоматолога" in search.text and "дітям" not in search.text
+    assert "нічого" in client.get("/", params={"q": "що це"}, headers=_auth()).text
 
     messages = client.get("/messages", headers=_auth())
     assert "бот → Олег" in messages.text and "Записав." in messages.text

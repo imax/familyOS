@@ -441,27 +441,70 @@ def group_by_month(entries: list[Entry]) -> list[tuple[str, list[Entry]]]:
     return [(month_title(m), list(g)) for m, g in groupby(entries, key=lambda e: e.date[:7])]
 
 
-# --- FTS ----------------------------------------------------------------------
+# --- search -------------------------------------------------------------------
 
 _WORD = re.compile(r"\w+", re.UNICODE)
 
+# Function words: they carry no meaning for search and would match half the database.
+# (Kept as text: ruff's SIM905 turns a literal `"...".split()` into a hundred-line list.)
+_STOPWORDS_TEXT = """
+він вона воно вони мене тебе себе мені тобі собі нам вам нас вас його них ним нею йому
+мій моя моє мої твій твоя твоє твої наш наша наше наші ваш ваша ваше ваші свій своя своє
+свої цей цього цієї цьому той того тієї тому але або щоб коли куди звідки хто кого кому
+чого чому від для про при під над без між через після перед біля коло крім ще вже теж
+також тільки лише дуже там тут так ось був була було були буде бути треба можна потім
+зараз сьогодні завтра вчора якщо який яка яке які весь вся все всі усе усі ага дякую будь
+ласка два дві три один одна одне одну
+"""
+STOPWORDS_UK = frozenset(_STOPWORDS_TEXT.split())
+# Inflection endings, longest first; one is cut when enough of the word remains.
+ENDINGS_UK = (
+    "ами", "ями", "ові", "еві", "єві", "ого", "ому", "ему", "єму", "ими", "іми", "їми", "ьми",
+    "ьої", "ьою", "ах", "ях", "ам", "ям", "ою", "ею", "єю", "ів", "їв", "ей", "ий", "ій", "им",
+    "ім", "їм", "их", "іх", "ом", "ем", "єм", "ої", "а", "я", "у", "ю", "и", "і", "ї", "е",
+    "є", "о", "ь",
+)  # fmt: skip
+
+
+def stem(word: str) -> str | None:
+    """A search prefix for a Ukrainian word: casefolded, ending cut, at most 5 chars.
+
+    A cheap stand-in for stemming, tuned for names and nouns: «діти» / «дітям» / «дітьми» →
+    «діт», «Коля» / «Колі» / «Колею» → «кол», «газовик» / «газовика» → «газов». Fleeting
+    vowels («котел» / «котла») are not handled. None for function words, digits and stubs.
+    """
+    w = word.casefold()
+    if len(w) < 3 or w.isdigit() or w in STOPWORDS_UK:
+        return None
+    keep = 2 if len(w) == 3 else 3  # «Оля» → «ол»: three-letter names inflect too
+    for ending in ENDINGS_UK:
+        if w.endswith(ending) and len(w) - len(ending) >= keep:
+            w = w[: -len(ending)]
+            break
+    return w[:5]
+
+
+def stems(text: str, max_terms: int = 12) -> list[str]:
+    """Distinct stems of the words in `text`, in order of appearance."""
+    out: list[str] = []
+    for word in _WORD.findall(text):
+        s = stem(word)
+        if s and s not in out:
+            out.append(s)
+        if len(out) >= max_terms:
+            break
+    return out
+
 
 def fts_query(text: str, max_terms: int = 12) -> str:
-    """Turn free text into a forgiving FTS5 query: 5-char prefixes of longer words, OR-ed.
+    """The stems as a forgiving FTS5 query: prefixes, OR-ed. '' when there is nothing."""
+    return " OR ".join(f'"{s}"*' for s in stems(text, max_terms))
 
-    Cheap stand-in for stemming that works well enough for Ukrainian inflection
-    ("газовик" / "газовика" / "газовику" share "газов").
-    """
-    terms: list[str] = []
-    for w in _WORD.findall(text.lower()):
-        if len(w) < 4 or w.isdigit():
-            continue
-        stem = w[:5]
-        if stem not in terms:
-            terms.append(stem)
-        if len(terms) >= max_terms:
-            break
-    return " OR ".join(f'"{t}"*' for t in terms)
+
+def word_pattern(text: str, max_terms: int = 12) -> str | None:
+    """The stems as a regex for `ufold(text) REGEXP ?`: a word starting with any of them."""
+    terms = stems(text, max_terms)
+    return r"\b(?:" + "|".join(re.escape(s) for s in terms) + ")" if terms else None
 
 
 # --- context ------------------------------------------------------------------

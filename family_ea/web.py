@@ -28,6 +28,7 @@ from .context import (
     fmt_event_when,
     fts_query,
     group_by_month,
+    word_pattern,
 )
 from .db import Database, Member
 from .family import Family
@@ -121,13 +122,14 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
     async def index(request: Request, q: str | None = None) -> HTMLResponse:
         if q and q.strip():
             q = q.strip()
+            pattern = word_pattern(q)
             return templates.TemplateResponse(
                 request,
                 "search.html",
                 {
                     "q": q,
-                    "events": db.search_events(q),
-                    "commitments": db.search_commitments(q),
+                    "events": db.search_events(pattern) if pattern else [],
+                    "commitments": db.search_commitments(pattern) if pattern else [],
                     "entries": db.search_entries(fts_query(q), limit=50),
                 },
             )

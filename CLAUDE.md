@@ -136,7 +136,9 @@ The backlog may name code.
 - Python 3.12, `uv` for deps, `ruff` for lint/format, `pytest` with `asyncio_mode=auto`.
 - FastAPI modules must not use `from __future__ import annotations`: postponed `Annotated`
   dependencies referencing closure variables break dependency resolution (silent 422s).
-- SQLite `LIKE`/`lower()` are ASCII-only; use the registered `ufold()` for Ukrainian text.
+- SQLite `LIKE`/`lower()` are ASCII-only; use the registered `ufold()` for Ukrainian text and
+  `regexp()` (Python `re`) for word-prefix search. Search terms come from `context.stems()`,
+  one heuristic behind both the FTS query and the events/commitments pattern.
 - Tests that check dates in the context monkeypatch `family_ea.db.utc_now_iso`; otherwise
   they drift with the calendar.
 

@@ -10,6 +10,8 @@ from family_ea.context import (
     fmt_due,
     fts_query,
     render_digest,
+    stems,
+    word_pattern,
 )
 from family_ea.db import Commitment, Database, Member
 from family_ea.family import Family
@@ -60,10 +62,18 @@ def test_fmt_due() -> None:
     assert fmt_due(_c(1), KYIV) == ""
 
 
-def test_fts_query() -> None:
+def test_search_stems() -> None:
+    # endings go, long words keep a 5-char prefix, function words and digits drop
     assert fts_query("Хто ремонтував котел?") == '"ремон"* OR "котел"*'
     assert fts_query("ок") == ""
     assert fts_query('він сказав "привіт" 12345') == '"сказа"* OR "приві"*'
+    assert stems("діти дітям дітьми") == ["діт"]
+    assert stems("Коля Колі Колею коли") == ["кол"]  # «коли» is a function word
+    assert stems("Марія Марії Марією") == ["марі"]
+    assert stems("Оля Олю кум кумом") == ["ол", "кум"]
+    assert stems("газовика стоматологу") == ["газов", "стома"]
+    assert word_pattern("діти, Коля?") == r"\b(?:діт|кол)"
+    assert word_pattern("що це") is None
 
 
 def test_render_digest_caps_open_list(family: Family) -> None:

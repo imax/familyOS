@@ -86,7 +86,8 @@ def test_commitment_lifecycle(db: Database) -> None:
     c = db.get_commitment(cid)
     assert c and c.status == "done" and c.closed_at
 
-    assert [x.id for x in db.search_commitments("стомат")] == [cid]
+    assert [x.id for x in db.search_commitments(r"\bстомат")] == [cid]
+    assert db.search_commitments(r"\bтомат") == []  # a word start, not a substring
 
 
 def test_messages_order_and_last_user_message(db: Database) -> None:

@@ -203,7 +203,7 @@ def test_event_ops(db: Database, family: Family) -> None:
     e2 = db.get_event(e2.id)
     assert e2 and e2.status == "cancelled" and e2.cancelled_at and e2.text == "Оля в таборі"
     assert [e.id for e in db.planned_events()] == [e1.id, e4.id, e5.id]
-    assert [e.id for e in db.search_events("табор")] == [e2.id]
+    assert [e.id for e in db.search_events(r"\bтабор")] == [e2.id]
 
 
 def test_context_lists_events(db: Database, family: Family, oleh: Member) -> None:
