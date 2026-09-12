@@ -13,4 +13,9 @@
   {% for i in recent %}{% include "_item.html" %}{% endfor %}
 </ul>
 {% endif %}
+{% if gallery %}
+<h2>Фото</h2>
+{#- the visual index: every photo once, the things on it under it; a tap opens the photo -#}
+<div class="photos index">{% for a, items in gallery %}<div><a href="/files/{{ a.sha256 }}" data-image><img src="/files/{{ a.sha256 }}" alt="" loading="lazy"></a><span>{% for i in items %}<a href="/items/{{ i.id }}">{{ i.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</span></div>{% endfor %}</div>
+{% endif %}
 {% endblock %}

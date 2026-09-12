@@ -108,6 +108,7 @@ def test_web_pages(db: Database, family: Family) -> None:
     items = client.get("/items", headers=_auth())
     assert items.status_code == 200 and 'class="current">Речі' in items.text
     assert "Паспорт Олі" in items.text and "квартира" in items.text and "Без місця" in items.text
+    assert "<h2>Фото</h2>" not in items.text  # no photos yet: no index
     place = client.get("/items", params={"place": "квартира"}, headers=_auth()).text
     assert "<h3>білий комод</h3>" in place and "Мерч" not in place
     assert "Мерч" in client.get("/items", params={"place": ""}, headers=_auth()).text
@@ -187,7 +188,11 @@ def test_web_files(db: Database, family: Family, tmp_path: Path) -> None:
     photos = f'<div class="photos"><a href="/files/{sha}" data-image><img src='
     assert "<h2>Фото</h2>" in item and photos in item and "бардачок" in item
     assert item.index("<h2>Фото</h2>") < item.index("<h2>Історія</h2>")
-    assert "📎" in client.get("/items", headers=_auth()).text
+    gallery = client.get("/items", headers=_auth()).text  # the visual index, at the bottom
+    assert "📎" in gallery
+    assert gallery.index("<h2>Нещодавно змінені</h2>") < gallery.index("<h2>Фото</h2>")
+    assert f'<a href="/files/{sha}" data-image><img src="/files/{sha}"' in gallery
+    assert f'<span><a href="/items/{iid}">Сервісна книжка</a></span>' in gallery
     assert "📎" in client.get("/items", params={"place": "авто"}, headers=_auth()).text
     search = client.get("/", params={"q": "авто"}, headers=_auth()).text
     assert f'<img src="/files/{sha}"' in search and "📎" in search

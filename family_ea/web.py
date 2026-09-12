@@ -34,7 +34,7 @@ from .context import (
     today_blocks,
     word_pattern,
 )
-from .db import Database, Member
+from .db import Attachment, Database, Item, Member
 from .family import Family
 from .files import FileStore, files_for
 from .ical import event_ics, ics_filename, todo_ics
@@ -194,13 +194,24 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
         no place known) lists a place by spot, `?owner=` one person's things."""
         if place is None and not owner:
             recent = db.recent_items(10)
+            # The visual index: every photo once (one photo of a shelf makes several items),
+            # with the items on it under it, in the place / spot / name order of the lists.
+            everything = db.list_items()
+            files = files_for(db, "item", everything)
+            by_photo: dict[str, tuple[Attachment, list[Item]]] = {}
+            for i in everything:
+                for a in files.get(i.id, []):
+                    if a.is_image:
+                        by_photo.setdefault(a.sha256, (a, []))[1].append(i)
+            gallery = list(by_photo.values())
             return templates.TemplateResponse(
                 request,
                 "items.html",
                 {
+                    "gallery": gallery,
                     "recent": recent,
                     "places": db.places(),
-                    "item_files": files_for(db, "item", recent),
+                    "item_files": {i.id: files[i.id] for i in recent if i.id in files},
                 },
             )
         items = db.list_items(place=place, owner=owner)

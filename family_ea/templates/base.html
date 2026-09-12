@@ -65,8 +65,10 @@
   .files img { display: block; height: 5.5rem; border-radius: .3rem; }
   .photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr)); gap: .4rem;
             margin: .3rem 0 1rem; }
-  .photos a { display: block; }
   .photos img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: .3rem; }
+  .photos.index span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+                       margin-top: .15rem; font-size: .75rem; line-height: 1.25; color: #555; }
+  .photos.index span a { text-decoration: none; }
   dialog.lightbox { border: 0; padding: 0; background: transparent; max-width: 96vw; max-height: 96vh; }
   dialog.lightbox::backdrop { background: rgba(0, 0, 0, .85); }
   dialog.lightbox img { display: block; max-width: 96vw; max-height: 96vh; cursor: zoom-out; }
