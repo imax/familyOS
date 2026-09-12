@@ -1,13 +1,11 @@
 <li class="{{ r.kind }}"{% if sortable %} data-id="{{ r.id }}"{% endif %}>
   {%- if sortable %}<span class="grip" title="Потягни, щоб змінити порядок">⋮⋮</span>{% endif %}
   <span class="time{% if r.all_day %} allday{% endif %}">{{ r.time }}</span>
-  <span{% if r.more %} class="fold"{% endif %}>
+  <span>
     {%- if r.kind == 'commitment' %}<span class="mark">☐</span>{% elif r.kind == 'reminder' %}<span class="mark">⏰</span>{% endif -%}
     {{ r.text }}
-    {%- if r.more %}<span class="ellipsis">…</span>{% endif %}
     {%- if r.ics_url %} <a class="ical" href="{{ r.ics_url }}" title="в календар (.ics)">📅</a>{% endif %}
     {%- set meta = [r.note, r.who] | select | join(' · ') %}
     {%- if meta %} <span class="meta">· {{ meta }}</span>{% endif %}
-    {%- if r.more %}<span class="tail">{{ r.more }}</span>{% endif %}
   </span>
 </li>

@@ -365,33 +365,6 @@ class Row:
     note: str = ""  # 'до 17:00' / 'до 19.09': an end still ahead; the due when overdue
     who: str = ""  # display name; 'усім' for a reminder to everyone; '' when nobody in particular
     ics_url: str | None = None  # «📅»: an event or a dated commitment
-    more: str = ""  # the rest of a long text; the web shows it folded, a tap opens it
-
-
-FOLD_OVER = 80  # a text longer than this folds on the web
-HEAD_MAX = 70  # the head is cut within this many characters
-HEAD_MIN = 24  # at a boundary no earlier than this
-_BOUNDARIES = (". ", "! ", "? ", "; ", " (", ": ", ", ", " ")  # strongest first
-
-
-def split_long(text: str) -> tuple[str, str]:
-    """A long text as (head, rest): the head ends at the strongest boundary (sentence,
-    clause, parenthesis, comma, space) found late enough within its first HEAD_MAX
-    characters. A short text is (text, '')."""
-    text = text.strip()
-    if len(text) <= FOLD_OVER:
-        return text, ""
-    window = text[:HEAD_MAX]
-    for boundary in _BOUNDARIES:
-        cut = window.rfind(boundary)
-        if cut >= HEAD_MIN:
-            return text[:cut].rstrip(), text[cut:].lstrip(" .,;:!?")
-    return window.rstrip(), text[HEAD_MAX:].lstrip()
-
-
-def _row(kind: str, id: int, text: str, **kw) -> Row:
-    head, more = split_long(text)
-    return Row(kind, id, head, more=more, **kw)
 
 
 @dataclass
@@ -465,7 +438,7 @@ def build_timeline(
             note = ""
         else:
             note = f"до {end:%H:%M}" if last == day else f"до {end:%d.%m %H:%M}"
-        row = _row(
+        row = Row(
             "event",
             e.id,
             e.text,
@@ -485,29 +458,29 @@ def build_timeline(
         if c.due_at:
             due = parse_iso(c.due_at).astimezone(tz)
             if due < now:
-                late = _row("commitment", c.id, c.text, note=fmt_due(c, tz), who=who, ics_url=ics)
+                late = Row("commitment", c.id, c.text, note=fmt_due(c, tz), who=who, ics_url=ics)
                 overdue.append((c.due_at, late))
                 continue
-            row = _row("commitment", c.id, c.text, time=f"{due:%H:%M}", who=who, ics_url=ics)
+            row = Row("commitment", c.id, c.text, time=f"{due:%H:%M}", who=who, ics_url=ics)
             place(due.date(), (1, due.timestamp(), 2, c.id), row)
         elif c.due_from or c.due_to:
             first = date.fromisoformat(c.due_from or c.due_to or "")
             last = date.fromisoformat(c.due_to or c.due_from or "")
             if last < today:
-                late = _row("commitment", c.id, c.text, note=fmt_due(c, tz), who=who, ics_url=ics)
+                late = Row("commitment", c.id, c.text, note=fmt_due(c, tz), who=who, ics_url=ics)
                 overdue.append((c.due_to or c.due_from or "", late))
                 continue
             day = max(first, today)
-            row = _row("commitment", c.id, c.text, note=until_note(last, day), who=who, ics_url=ics)
+            row = Row("commitment", c.id, c.text, note=until_note(last, day), who=who, ics_url=ics)
             place(day, (2, 0.0, 2, c.id), row)
         else:
-            undated.append(_row("commitment", c.id, c.text, who=who))
+            undated.append(Row("commitment", c.id, c.text, who=who))
 
     for r in reminders:
         if not r.is_pending:
             continue
         at = parse_iso(r.at).astimezone(tz)
-        row = _row(
+        row = Row(
             "reminder",
             r.id,
             r.text,
