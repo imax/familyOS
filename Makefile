@@ -2,7 +2,7 @@
 LAST ?= 50
 
 # data/prod.db is phony on purpose: every backup/log starts from a fresh pull.
-.PHONY: help backup log local data/prod.db test lint fmt deploy
+.PHONY: help backup log local web data/prod.db test lint fmt deploy
 
 help:
 	@grep -E '^[a-z]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-8s %s\n", $$1, $$2}'
@@ -17,6 +17,9 @@ local: data/prod.db  ## pull production, then make it the local db and files (ch
 	rm -f data/family.db data/family.db-wal data/family.db-shm
 	cp data/prod.db data/family.db
 	mkdir -p data/files && cp -R data/prod-files/. data/files/
+
+web:  ## the web view alone on the local db, no bot; prints a login link
+	uv run python -m family_ea web
 
 data/prod.db:
 	uv run python -m family_ea pull

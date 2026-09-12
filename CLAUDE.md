@@ -29,7 +29,8 @@ fly deploy --ha=false                     # deploy; never without --ha=false (se
 ```
 
 `make` lists the shortcuts: `make backup` (pull + zip), `make log` (pull + log, `LAST=`),
-`make test`, `make lint`, `make fmt`, `make deploy` (with `--ha=false` baked in).
+`make local` (pull + production becomes the local data), `make web` (the web alone, a login
+link), `make test`, `make lint`, `make fmt`, `make deploy` (with `--ha=false` baked in).
 
 `pull` needs `WEB_URL` and `WEB_SECRET` in `.env`; it signs a short-lived bearer token and
 downloads `GET /backup.db`, a consistent online backup, WAL included, then `GET /files.json`
