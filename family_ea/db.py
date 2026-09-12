@@ -1,9 +1,9 @@
-"""SQLite storage: members, messages, journal, items, events, commitments, reminders, facts,
+"""SQLite storage: members, messages, journal, items, events, todos, reminders, facts,
 today lists.
 
 One connection, one process, one writer. Original messages are never mutated;
 journal entries are soft-deleted; items are removed (gone) and every change to one writes
-an item_history row; commitments are closed, events are cancelled and reminders
+an item_history row; todos are closed, events are cancelled and reminders
 are sent, missed or cancelled, never removed (a past event simply passes); facts (the
 human-maintained standing context) keep every version; members (who talks to the bot) are
 edited by the admin on the web.
@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
@@ -41,14 +42,13 @@ CREATE TABLE IF NOT EXISTS journal (
   deleted_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS commitments (
+CREATE TABLE IF NOT EXISTS todos (
   id INTEGER PRIMARY KEY,
   text TEXT NOT NULL,
   owner TEXT,                       -- family member id; NULL = both / unclear
   status TEXT NOT NULL,             -- 'open' | 'done' | 'dropped'
-  due_at TEXT,                      -- ISO UTC datetime when there is a specific time
-  due_from TEXT,                    -- ISO date, soft window start
-  due_to TEXT,                      -- ISO date, soft window end
+  due TEXT,                         -- ISO date: the deadline day; NULL = none (a time of day
+                                    --   makes it an event, not a todo)
   position INTEGER,                 -- hand-set order of the undated ones (web); NULL = after them
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -223,14 +223,12 @@ class Entry:
 
 
 @dataclass(frozen=True)
-class Commitment:
+class Todo:
     id: int
     text: str
     owner: str | None
     status: str
-    due_at: str | None
-    due_from: str | None
-    due_to: str | None
+    due: str | None  # ISO date, the deadline day; None = undated
     created_by: str
     created_at: str
     source_message_id: int
@@ -243,8 +241,7 @@ class Commitment:
 
     @property
     def has_due(self) -> bool:
-        """Dated in any way: a specific time or a soft window. Only these go to a calendar."""
-        return bool(self.due_at or self.due_from or self.due_to)
+        return bool(self.due)
 
 
 @dataclass(frozen=True)
@@ -373,8 +370,8 @@ def _item_change(row: sqlite3.Row) -> ItemChange:
     return ItemChange(**dict(row))
 
 
-def _commitment(row: sqlite3.Row) -> Commitment:
-    return Commitment(**dict(row))
+def _todo(row: sqlite3.Row) -> Todo:
+    return Todo(**dict(row))
 
 
 def _event(row: sqlite3.Row) -> Event:
@@ -388,7 +385,7 @@ def _reminder(row: sqlite3.Row) -> Reminder:
 ENTRY_UPDATABLE = ("text", "date")
 ITEM_UPDATABLE = ("name", "owner", "place", "spot", "note")
 ITEM_LABELS = {"name": "назва", "owner": "власник", "note": "примітка"}  # history detail
-COMMITMENT_UPDATABLE = ("text", "owner", "due_at", "due_from", "due_to")
+TODO_UPDATABLE = ("text", "owner", "due")
 EVENT_UPDATABLE = ("text", "who", "starts_at", "until", "date_from", "date_to")
 REMINDER_UPDATABLE = ("text", "who", "at")
 
@@ -421,10 +418,34 @@ class Database:
                 " source_message_id, deleted_at FROM memories ORDER BY id;"
                 " DROP TABLE IF EXISTS memories_fts; DROP TABLE memories;"
             )
-        columns = {r[1] for r in self.conn.execute("PRAGMA table_info(commitments)")}
-        if "position" not in columns:
-            # 2026-09-11: undated commitments got a hand-set order, dragged on the web.
-            self.conn.execute("ALTER TABLE commitments ADD COLUMN position INTEGER")
+        if "commitments" in tables:
+            # 2026-09-12: commitments became todos. A todo has a deadline day, not a time or
+            # a window (a thing with a time of day is an event): due_at -> its day in Kyiv,
+            # a window -> its last day. Same ids; the old table goes.
+            kyiv = ZoneInfo("Europe/Kyiv")
+            for r in self.conn.execute("SELECT * FROM commitments ORDER BY id").fetchall():
+                due = r["due_to"] or r["due_from"] or None
+                if r["due_at"]:
+                    at = datetime.fromisoformat(r["due_at"].replace("Z", "+00:00"))
+                    due = at.astimezone(kyiv).date().isoformat()
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO todos (id, text, owner, status, due, position,"
+                    " created_by, created_at, source_message_id, closed_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        r["id"],
+                        r["text"],
+                        r["owner"],
+                        r["status"],
+                        due,
+                        r["position"] if "position" in r.keys() else None,  # noqa: SIM118
+                        r["created_by"],
+                        r["created_at"],
+                        r["source_message_id"],
+                        r["closed_at"],
+                    ),
+                )
+            self.conn.execute("DROP TABLE commitments")
             self.conn.commit()
         columns = {r[1] for r in self.conn.execute("PRAGMA table_info(messages)")}
         if "photo_file_id" not in columns:
@@ -973,96 +994,91 @@ class Database:
         ).fetchall()
         return [_event(r) for r in rows]
 
-    # --- commitments --------------------------------------------------------
+    # --- todos --------------------------------------------------------
 
-    def create_commitment(
+    def create_todo(
         self,
         text: str,
         *,
         owner: str | None,
         created_by: str,
         source_message_id: int,
-        due_at: str | None = None,
-        due_from: str | None = None,
-        due_to: str | None = None,
+        due: str | None = None,
     ) -> int:
         cur = self.conn.execute(
-            "INSERT INTO commitments (text, owner, status, due_at, due_from, due_to,"
-            " created_by, created_at, source_message_id)"
-            " VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?)",
-            (text, owner, due_at, due_from, due_to, created_by, utc_now_iso(), source_message_id),
+            "INSERT INTO todos (text, owner, status, due, created_by, created_at,"
+            " source_message_id) VALUES (?, ?, 'open', ?, ?, ?, ?)",
+            (text, owner, due, created_by, utc_now_iso(), source_message_id),
         )
         self.conn.commit()
         return int(cur.lastrowid or 0)
 
-    def update_commitment(self, commitment_id: int, **fields: str | None) -> bool:
-        """Update text/owner/due_* of an open commitment. Returns False if not open."""
-        fields = {k: v for k, v in fields.items() if k in COMMITMENT_UPDATABLE}
+    def update_todo(self, todo_id: int, **fields: str | None) -> bool:
+        """Update text/owner/due of an open todo. Returns False if not open."""
+        fields = {k: v for k, v in fields.items() if k in TODO_UPDATABLE}
         if not fields:
             return False
         assignments = ", ".join(f"{k} = ?" for k in fields)
         cur = self.conn.execute(
-            f"UPDATE commitments SET {assignments} WHERE id = ? AND status = 'open'",
-            (*fields.values(), commitment_id),
+            f"UPDATE todos SET {assignments} WHERE id = ? AND status = 'open'",
+            (*fields.values(), todo_id),
         )
         self.conn.commit()
         return cur.rowcount == 1
 
-    def close_commitment(self, commitment_id: int, status: str) -> bool:
-        """Close an open commitment as 'done' or 'dropped'. Returns False if not open."""
+    def close_todo(self, todo_id: int, status: str) -> bool:
+        """Close an open todo as 'done' or 'dropped'. Returns False if not open."""
         if status not in ("done", "dropped"):
             raise ValueError(f"bad status: {status}")
         cur = self.conn.execute(
-            "UPDATE commitments SET status = ?, closed_at = ? WHERE id = ? AND status = 'open'",
-            (status, utc_now_iso(), commitment_id),
+            "UPDATE todos SET status = ?, closed_at = ? WHERE id = ? AND status = 'open'",
+            (status, utc_now_iso(), todo_id),
         )
         self.conn.commit()
         return cur.rowcount == 1
 
-    def get_commitment(self, commitment_id: int) -> Commitment | None:
-        row = self.conn.execute(
-            "SELECT * FROM commitments WHERE id = ?", (commitment_id,)
-        ).fetchone()
-        return _commitment(row) if row else None
+    def get_todo(self, todo_id: int) -> Todo | None:
+        row = self.conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+        return _todo(row) if row else None
 
-    def open_commitments(self) -> list[Commitment]:
-        """Open ones in the family's order: the unplaced ones first, newest first (a new
-        commitment goes on top until someone drags it), then the hand-set positions (see
-        reorder_commitments). The timeline, the digest and the LLM context all take this
-        order, so what someone dragged on the web holds everywhere."""
+    def open_todos(self) -> list[Todo]:
+        """Open ones in the family's order: the unplaced ones first, newest first (a new todo
+        goes on top until someone drags it), then the hand-set positions (see reorder_todos).
+        The timeline, the digest and the LLM context all take this order for the undated
+        ones, so what someone dragged on the web holds everywhere; dated ones are shown by
+        deadline wherever they appear."""
         rows = self.conn.execute(
-            "SELECT * FROM commitments WHERE status = 'open'"
+            "SELECT * FROM todos WHERE status = 'open'"
             " ORDER BY position IS NOT NULL, position, id DESC"
         ).fetchall()
-        return [_commitment(r) for r in rows]
+        return [_todo(r) for r in rows]
 
-    def recent_done_commitments(self, limit: int) -> list[Commitment]:
+    def recent_done_todos(self, limit: int) -> list[Todo]:
         """The last ones closed as done, newest first: the tail of the home page."""
         rows = self.conn.execute(
-            "SELECT * FROM commitments WHERE status = 'done' ORDER BY closed_at DESC, id DESC"
-            " LIMIT ?",
+            "SELECT * FROM todos WHERE status = 'done' ORDER BY closed_at DESC, id DESC LIMIT ?",
             (limit,),
         ).fetchall()
-        return [_commitment(r) for r in rows]
+        return [_todo(r) for r in rows]
 
-    def reorder_commitments(self, ids: list[int]) -> None:
+    def reorder_todos(self, ids: list[int]) -> None:
         """The undated list as someone dragged it on the web: `ids` in this order; every other
-        open commitment (new since that page was drawn, or missing from a stale one) loses its
+        open todo (new since that page was drawn, or missing from a stale one) loses its
         position and goes on top, newest first. Ids that are not open are ignored."""
-        self.conn.execute("UPDATE commitments SET position = NULL WHERE status = 'open'")
+        self.conn.execute("UPDATE todos SET position = NULL WHERE status = 'open'")
         self.conn.executemany(
-            "UPDATE commitments SET position = ? WHERE id = ? AND status = 'open'",
-            [(n, cid) for n, cid in enumerate(ids, start=1)],
+            "UPDATE todos SET position = ? WHERE id = ? AND status = 'open'",
+            [(n, tid) for n, tid in enumerate(ids, start=1)],
         )
         self.conn.commit()
 
-    def search_commitments(self, pattern: str, limit: int = 50) -> list[Commitment]:
+    def search_todos(self, pattern: str, limit: int = 50) -> list[Todo]:
         """`pattern` is a casefolded regex, see `context.word_pattern`."""
         rows = self.conn.execute(
-            "SELECT * FROM commitments WHERE ufold(text) REGEXP ? ORDER BY id DESC LIMIT ?",
+            "SELECT * FROM todos WHERE ufold(text) REGEXP ? ORDER BY id DESC LIMIT ?",
             (pattern, limit),
         ).fetchall()
-        return [_commitment(r) for r in rows]
+        return [_todo(r) for r in rows]
 
     # --- reminders ------------------------------------------------------------
 

@@ -58,16 +58,14 @@ def test_web_pages(db: Database, family: Family) -> None:
     db.set_llm_result(mid, '{"output": {"reply": "Записав."}}')
     db.insert_message("bot", "oleh", "Записав.")
     db.create_entry("Газовик Петро замінив клапан", "2026-09-10", "oleh", mid)
-    db.create_commitment(
+    db.create_todo(
         "Стоматолог",
         owner="anna",
         created_by="anna",
         source_message_id=mid,
-        due_from="2000-01-01",
+        due="2000-01-01",
     )
-    db.create_commitment(
-        "Купити дітям взуття", owner=None, created_by="oleh", source_message_id=mid
-    )
+    db.create_todo("Купити дітям взуття", owner=None, created_by="oleh", source_message_id=mid)
     db.create_event(
         "Колі до стоматолога",
         who="anna",
@@ -151,13 +149,11 @@ def test_web_files_and_documents(db: Database, family: Family, tmp_path: Path) -
         created_by="oleh",
         source_message_id=mid,
     )
-    cid = db.create_commitment(
-        "Записатись на ТО", owner="oleh", created_by="oleh", source_message_id=mid
-    )
+    cid = db.create_todo("Записатись на ТО", owner="oleh", created_by="oleh", source_message_id=mid)
     applied = [
         {"kind": "entry", "op": "create", "id": eid, "ok": True},
         {"kind": "item", "op": "create", "id": iid, "ok": True},
-        {"kind": "commitment", "op": "create", "id": cid, "ok": True},
+        {"kind": "todo", "op": "create", "id": cid, "ok": True},
     ]
     db.set_llm_result(mid, json.dumps({"applied": applied}))
     db.describe_attachments(mid, "Рахунок СТО «Автомайстер» № 1187 від 30.08.2026 на 4 500 грн.")
@@ -208,7 +204,7 @@ def test_web_files_and_documents(db: Database, family: Family, tmp_path: Path) -
         "Рахунок СТО «Автомайстер»"
     )
     assert "ТО авто: 4 500 грн" in docs.text and "Сервісна книжка" in docs.text
-    assert "справа ·</span> Записатись на ТО" in docs.text
+    assert "задача ·</span> Записатись на ТО" in docs.text
     assert "без запису" in docs.text
     assert f'<a href="/files/{sha}" data-image>' in docs.text
     assert client.get("/documents").status_code == 401
@@ -258,27 +254,23 @@ def test_family_web_add_and_edit(db: Database, family: Family) -> None:
 
 def test_web_ics(db: Database, family: Family) -> None:
     mid = db.insert_message("anna", "anna", "...")
-    timed = db.create_commitment(
-        "Стоматолог",
-        owner="anna",
-        created_by="anna",
-        source_message_id=mid,
-        due_at="2026-09-10T12:30:00Z",
+    dated = db.create_todo(
+        "Стоматолог", owner="anna", created_by="anna", source_message_id=mid, due="2026-09-10"
     )
-    undated = db.create_commitment("Без дати", owner=None, created_by="anna", source_message_id=mid)
+    undated = db.create_todo("Без дати", owner=None, created_by="anna", source_message_id=mid)
     client = TestClient(build_web(_settings(), family, db))
 
     home = client.get("/", headers=_auth())
-    assert f'href="/commitments/{timed}.ics"' in home.text
-    assert f'href="/commitments/{undated}.ics"' not in home.text
+    assert f'href="/todos/{dated}.ics"' in home.text
+    assert f'href="/todos/{undated}.ics"' not in home.text
 
-    ics = client.get(f"/commitments/{timed}.ics", headers=_auth())
+    ics = client.get(f"/todos/{dated}.ics", headers=_auth())
     assert ics.status_code == 200 and ics.headers["content-type"].startswith("text/calendar")
-    assert "DTSTART:20260910T123000Z" in ics.text
+    assert "DTSTART;VALUE=DATE:20260910" in ics.text
     assert 'filename="stomatoloh.ics"' in ics.headers["content-disposition"]
-    assert client.get(f"/commitments/{undated}.ics", headers=_auth()).status_code == 404
-    assert client.get("/commitments/999.ics", headers=_auth()).status_code == 404
-    assert client.get(f"/commitments/{timed}.ics").status_code == 401
+    assert client.get(f"/todos/{undated}.ics", headers=_auth()).status_code == 404
+    assert client.get("/todos/999.ics", headers=_auth()).status_code == 404
+    assert client.get(f"/todos/{dated}.ics").status_code == 401
 
 
 def test_login_from_a_bot_link(db: Database, family: Family) -> None:

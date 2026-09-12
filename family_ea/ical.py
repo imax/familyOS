@@ -1,11 +1,11 @@
-"""An event or a dated commitment as an iCalendar file: one tap and it is in the phone calendar."""
+"""An event or a dated todo as an iCalendar file: one tap and it is in the phone calendar."""
 
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
 from .context import DEFAULT_EVENT_DURATION, parse_iso
-from .db import Commitment, Event
+from .db import Event, Todo
 from .family import slugify
 
 MAX_LINE_OCTETS = 74  # RFC 5545 folds at 75 octets; keep one for the continuation space
@@ -72,9 +72,8 @@ def event_ics(e: Event, now: datetime | None = None) -> bytes:
     return _vcalendar(f"event-{e.id}@family-ea", e.text, when, now)
 
 
-def commitment_ics(c: Commitment, now: datetime | None = None) -> bytes:
-    """A dated commitment: due_at as a one-hour slot, or the due window as all-day."""
-    if not c.has_due:
-        raise ValueError(f"commitment #{c.id} has no dates")
-    when = _timed(c.due_at, None) if c.due_at else _all_day(c.due_from, c.due_to)
-    return _vcalendar(f"commitment-{c.id}@family-ea", c.text, when, now)
+def todo_ics(t: Todo, now: datetime | None = None) -> bytes:
+    """A dated todo: its deadline as an all-day entry."""
+    if not t.due:
+        raise ValueError(f"todo #{t.id} has no deadline")
+    return _vcalendar(f"todo-{t.id}@family-ea", t.text, _all_day(t.due, t.due), now)

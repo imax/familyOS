@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from family_ea.context import (
     Agenda,
-    bucket_commitments,
+    bucket_todos,
     build_agenda,
     build_context,
     digest_text,
@@ -105,16 +105,16 @@ def test_digest_with_events(family: Family) -> None:
         ],
         NOW,
     )
-    b = bucket_commitments(
-        [_c(1, text="Забрати форму", owner="anna", due_from="2026-09-10", due_to="2026-09-10")],
+    b = bucket_todos(
+        [_c(1, text="Забрати форму", owner="anna", due="2026-09-10")],
         NOW,
     )
     assert digest_text(a, b, family, KYIV) == (
         "Сьогодні:\n- 10:00–11:00 Сніданок з командою (Олег)\n"
         "Завтра:\n- 15:30 Стоматолог (Анна)\n"
-        "Справи на сьогодні:\n- Забрати форму (Анна, 10.09)"
+        "Задачі на сьогодні:\n- Забрати форму (Анна, до 10.09)"
     )
-    assert digest_text(Agenda(), bucket_commitments([], NOW), family, KYIV) is None
+    assert digest_text(Agenda(), bucket_todos([], NOW), family, KYIV) is None
 
 
 def test_event_ops(db: Database, family: Family) -> None:

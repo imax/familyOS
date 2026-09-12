@@ -2,9 +2,9 @@
 
 There is no password. `/web` in Telegram (and «Відкрити» under the digest and /today) sends
 a member a link to `/login?t=…`; opening it sets a long-lived signed cookie. Read-only except
-`/facts` and `/family`, the two things a human edits by hand, and the order of undated
-commitments, dragged on the home page. Commitments are closed only through the LLM's
-`close` op (web done/drop was removed).
+`/facts` and `/family`, the two things a human edits by hand, and three things about a
+todo, all through the db methods the LLM ops use: done («☐»), the text («✎») and the
+order of the undated ones (dragged), on the home page.
 """
 
 import json
@@ -37,7 +37,7 @@ from .context import (
 from .db import Database, Member
 from .family import Family
 from .files import FileStore, documents, files_for, search_documents
-from .ical import commitment_ics, event_ics, ics_filename
+from .ical import event_ics, ics_filename, todo_ics
 
 log = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
     templates.env.filters["dt"] = lambda iso: fmt_dt(iso, settings.tz)
     templates.env.filters["date"] = fmt_date
     templates.env.filters["day"] = lambda iso: fmt_dt(iso, settings.tz)[:5]
-    templates.env.filters["due"] = lambda c: fmt_due(c, settings.tz)
+    templates.env.filters["due"] = fmt_due
     templates.env.filters["when"] = lambda e: fmt_event_when(e, settings.tz)
     templates.env.filters["person"] = family.display_name
     templates.env.filters["pretty_json"] = lambda s: (
@@ -140,7 +140,7 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
     async def index(
         request: Request, member: Annotated[Member, Depends(authed)], q: str | None = None
     ) -> HTMLResponse:
-        """The boards (the viewer's own first), the timeline, the last done commitments;
+        """The boards (the viewer's own first), the timeline, the last done todos;
         `?q=` searches instead."""
         if q and q.strip():
             q = q.strip()
@@ -153,7 +153,7 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
                 {
                     "q": q,
                     "events": db.search_events(pattern) if pattern else [],
-                    "commitments": db.search_commitments(pattern) if pattern else [],
+                    "todos": db.search_todos(pattern) if pattern else [],
                     "entries": entries,
                     "items": items,
                     "files": files_for(db, "entry", entries),
@@ -163,7 +163,7 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
             )
         now = datetime.now(settings.tz)
         timeline = build_timeline(
-            db.planned_events(), db.open_commitments(), db.pending_reminders(), now, family
+            db.planned_events(), db.open_todos(), db.pending_reminders(), now, family
         )
         boards = today_blocks(db.current_today_lists(), family, member.id, now)
         return templates.TemplateResponse(
@@ -173,7 +173,7 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
                 "q": "",
                 "timeline": timeline,
                 "today": boards,
-                "done": db.recent_done_commitments(DONE_SHOWN),
+                "done": db.recent_done_todos(DONE_SHOWN),
             },
         )
 
@@ -283,37 +283,37 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
             raise HTTPException(status_code=404, detail="no such event")
         return ics_response(event_ics(e), e.text)
 
-    @app.get("/commitments/{cid:int}.ics", dependencies=[Depends(authed)])
-    async def commitment_ics_file(cid: int) -> Response:
-        c = db.get_commitment(cid)
+    @app.get("/todos/{cid:int}.ics", dependencies=[Depends(authed)])
+    async def todo_ics_file(cid: int) -> Response:
+        c = db.get_todo(cid)
         if c is None or not c.has_due:
-            raise HTTPException(status_code=404, detail="no such dated commitment")
-        return ics_response(commitment_ics(c), c.text)
+            raise HTTPException(status_code=404, detail="no such dated todo")
+        return ics_response(todo_ics(c), c.text)
 
-    @app.post("/commitments/{cid:int}/done", dependencies=[Depends(authed)])
-    async def commitment_done(cid: int) -> Response:
-        """«☐» tapped on the home page: the commitment is done, through the same db method
+    @app.post("/todos/{cid:int}/done", dependencies=[Depends(authed)])
+    async def todo_done(cid: int) -> Response:
+        """«☐» tapped on the home page: the todo is done, through the same db method
         the LLM's close op uses. Dropping stays with the LLM; nothing reopens."""
-        if not db.close_commitment(cid, "done"):
-            raise HTTPException(status_code=404, detail="no such open commitment")
+        if not db.close_todo(cid, "done"):
+            raise HTTPException(status_code=404, detail="no such open todo")
         return Response(status_code=204)
 
-    @app.post("/commitments/{cid:int}/text", dependencies=[Depends(authed)])
-    async def commitment_text(cid: int, text: Annotated[str, Form()] = "") -> Response:
-        """The text after an edit in place on the home page; open commitments only, through
+    @app.post("/todos/{cid:int}/text", dependencies=[Depends(authed)])
+    async def todo_text(cid: int, text: Annotated[str, Form()] = "") -> Response:
+        """The text after an edit in place on the home page; open todos only, through
         the same db method the LLM's update op uses. Closing stays with the LLM."""
         text = text.strip()
         if not text:
             raise HTTPException(status_code=400, detail="empty text")
-        if not db.update_commitment(cid, text=text):
-            raise HTTPException(status_code=404, detail="no such open commitment")
+        if not db.update_todo(cid, text=text):
+            raise HTTPException(status_code=404, detail="no such open todo")
         return Response(status_code=204)
 
-    @app.post("/commitments/order", dependencies=[Depends(authed)])
-    async def commitments_order(ids: Annotated[list[int], Form()]) -> Response:
+    @app.post("/todos/order", dependencies=[Depends(authed)])
+    async def todos_order(ids: Annotated[list[int], Form()]) -> Response:
         """The «Без дати» list after a drag: every id in its new place. Besides the text,
-        the one thing about a commitment the web writes; the LLM never sets the order."""
-        db.reorder_commitments(ids)
+        the one thing about a todo the web writes; the LLM never sets the order."""
+        db.reorder_todos(ids)
         return Response(status_code=204)
 
     @app.get("/facts", response_class=HTMLResponse, dependencies=[Depends(authed)])

@@ -187,7 +187,8 @@ _OP_KIND = {
     "items": "item",
     "memories": "memory",  # rows from before 2026-09-11
     "events": "event",
-    "commitments": "commitment",
+    "todos": "todo",
+    "commitments": "commitment",  # rows from before 2026-09-12
     "reminders": "reminder",
 }
 

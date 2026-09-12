@@ -17,12 +17,12 @@ from tests.test_web import JPEG, _auth, _settings
 
 LLM_RESULT = (
     '{"model": "m", "usage": {"input_tokens": 10, "output_tokens": 2},'
-    ' "output": {"reply": "Записав.", "commitments": [{"op": "create", "text": "Стоматолог",'
-    ' "owner": "anna", "due_at": "2000-01-01T15:30:00+02:00"}]},'
-    ' "applied": [{"kind": "commitment", "op": "create", "id": 1, "ok": true, "note": ""}]}'
+    ' "output": {"reply": "Записав.", "todos": [{"op": "create", "text": "Стоматолог",'
+    ' "owner": "anna", "due": "2000-01-01"}]},'
+    ' "applied": [{"kind": "todo", "op": "create", "id": 1, "ok": true, "note": ""}]}'
 )
 
-OP_LINE = "commitment create: text='Стоматолог', owner='anna', due_at='2000-01-01T15:30:00+02:00'"
+OP_LINE = "todo create: text='Стоматолог', owner='anna', due='2000-01-01'"
 
 
 def _bearer() -> dict[str, str]:
@@ -33,7 +33,7 @@ def _seed(db: Database) -> None:
     mid = db.insert_message("oleh", "oleh", "Стоматолог завтра о 15:30", tg_message_id=1)
     db.set_llm_result(mid, LLM_RESULT)
     db.insert_message("bot", "oleh", "Записав.")
-    db.create_commitment("Стоматолог", owner="anna", created_by="oleh", source_message_id=mid)
+    db.create_todo("Стоматолог", owner="anna", created_by="oleh", source_message_id=mid)
 
 
 def _rows(path: Path) -> list[tuple[str, str]]:
@@ -119,7 +119,7 @@ def test_llm_result_lines() -> None:
     assert llm_result_lines(LLM_RESULT) == [
         "m: 10 in, 2 out",
         OP_LINE,
-        "[ok] commitment create #1",
+        "[ok] todo create #1",
     ]
     assert llm_result_lines('{"error": "boom"}') == ["error: boom"]
     with_photo = '{"output": {"reply": "Ок.", "photo": "Чек на 1 200 грн"}, "applied": []}'
@@ -142,6 +142,6 @@ def test_show_log_prints_messages_with_ops(tmp_path: Path, capsys: pytest.Captur
     assert out[1:4] == [
         "    m: 10 in, 2 out",
         f"    {OP_LINE}",
-        "    [ok] commitment create #1",
+        "    [ok] todo create #1",
     ]
     assert out[4].endswith("bot -> Олег: Записав.")

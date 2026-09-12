@@ -1,9 +1,9 @@
-"""Apply LLM operations to the database: journal, items, events, commitments, reminders,
+"""Apply LLM operations to the database: journal, items, events, todos, reminders,
 today boards.
 
 Invalid ops (unknown ids, closed items, bad dates, an event without a date, a reminder
-without a time) are ignored and logged, never fatal. Closing a commitment goes through
-`close_commitment`, cancelling an event through `cancel_event`, a reminder through
+without a time) are ignored and logged, never fatal. Closing a todo goes through
+`close_todo`, cancelling an event through `cancel_event`, a reminder through
 `cancel_reminder`; nothing else closes or cancels.
 """
 
@@ -16,14 +16,14 @@ from zoneinfo import ZoneInfo
 
 from .db import Database
 from .family import Family
-from .llm import CommitmentOp, EventOp, ItemOp, JournalOp, LlmResult, ReminderOp
+from .llm import EventOp, ItemOp, JournalOp, LlmResult, ReminderOp, TodoOp
 
 log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class Applied:
-    kind: str  # 'entry' | 'item' | 'event' | 'commitment' | 'reminder' | 'today'
+    kind: str  # 'entry' | 'item' | 'event' | 'todo' | 'reminder' | 'today'
     op: str
     id: int | None
     ok: bool
@@ -94,37 +94,23 @@ def _item_fields(i: ItemOp) -> tuple[dict, list[str]]:
     return fields, notes
 
 
-def _commitment_fields(c: CommitmentOp, family: Family, tz: ZoneInfo) -> tuple[dict, list[str]]:
+def _todo_fields(t: TodoOp, family: Family) -> tuple[dict, list[str]]:
     """Validated fields present on the op, plus notes about anything dropped."""
     fields: dict[str, str | None] = {}
     notes: list[str] = []
-    if (text := _text(c.text)) is not None:
+    if (text := _text(t.text)) is not None:
         fields["text"] = text
-    if c.owner:
-        owner = normalize_member(c.owner, family)
+    if t.owner:
+        owner = normalize_member(t.owner, family)
         if owner is None:
-            notes.append(f"unknown owner {c.owner!r} -> null")
+            notes.append(f"unknown owner {t.owner!r} -> null")
         fields["owner"] = owner
-    if c.due_at:
-        due_at = normalize_datetime(c.due_at, tz)
-        if due_at is None:
-            notes.append(f"bad due_at {c.due_at!r} dropped")
+    if t.due:
+        due = normalize_date(t.due)
+        if due is None:
+            notes.append(f"bad due {t.due!r} dropped")
         else:
-            fields["due_at"] = due_at
-    for name in ("due_from", "due_to"):
-        raw = getattr(c, name)
-        if raw:
-            value = normalize_date(raw)
-            if value is None:
-                notes.append(f"bad {name} {raw!r} dropped")
-            else:
-                fields[name] = value
-    # A specific time and a soft window are two forms of the same thing: the new one wins,
-    # the old one goes, otherwise "moved to next week" keeps showing at the old time.
-    if "due_at" in fields:
-        fields["due_from"] = fields["due_to"] = None
-    elif "due_from" in fields or "due_to" in fields:
-        fields["due_at"] = None
+            fields["due"] = due
     return fields, notes
 
 
@@ -313,44 +299,35 @@ def apply_ops(
                 )
             )
 
-    for c in result.commitments:
-        fields, notes = _commitment_fields(c, family, tz)
+    for t in result.todos:
+        fields, notes = _todo_fields(t, family)
         note = "; ".join(notes)
-        if c.op == "create":
+        if t.op == "create":
             if "text" not in fields:
-                applied.append(Applied("commitment", "create", None, False, "empty text"))
+                applied.append(Applied("todo", "create", None, False, "empty text"))
                 continue
-            cid = db.create_commitment(
+            tid = db.create_todo(
                 fields["text"] or "",
                 owner=fields.get("owner"),
                 created_by=author_id,
                 source_message_id=message_id,
-                due_at=fields.get("due_at"),
-                due_from=fields.get("due_from"),
-                due_to=fields.get("due_to"),
+                due=fields.get("due"),
             )
-            applied.append(Applied("commitment", "create", cid, True, note))
-        elif c.op == "update":
-            if not c.id or not fields:
-                applied.append(
-                    Applied("commitment", "update", c.id or None, False, "nothing to update")
-                )
+            applied.append(Applied("todo", "create", tid, True, note))
+        elif t.op == "update":
+            if not t.id or not fields:
+                note = "; ".join([*notes, "nothing to update"])
+                applied.append(Applied("todo", "update", t.id or None, False, note))
                 continue
-            ok = db.update_commitment(c.id, **fields)
+            ok = db.update_todo(t.id, **fields)
             applied.append(
-                Applied(
-                    "commitment",
-                    "update",
-                    c.id or None,
-                    ok,
-                    note if ok else "not found or not open",
-                )
+                Applied("todo", "update", t.id or None, ok, note if ok else "not found or not open")
             )
-        elif c.op == "close":
-            status = c.status or "done"
-            ok = bool(c.id) and db.close_commitment(c.id, status)
+        elif t.op == "close":
+            status = t.status or "done"
+            ok = bool(t.id) and db.close_todo(t.id, status)
             note = "" if ok else "not found or not open"
-            applied.append(Applied("commitment", f"close:{status}", c.id or None, ok, note))
+            applied.append(Applied("todo", f"close:{status}", t.id or None, ok, note))
 
     for r in result.reminders:
         fields, notes = _reminder_fields(r, family, tz)

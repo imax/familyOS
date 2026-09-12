@@ -62,49 +62,62 @@ def test_memories_table_becomes_the_journal(tmp_path: Path) -> None:
     again.close()
 
 
-def test_commitments_keep_the_order_dragged_on_the_web(db: Database) -> None:
+def test_todos_keep_the_order_dragged_on_the_web(db: Database) -> None:
     mid = db.insert_message("oleh", "oleh", "...")
 
     def new(text: str) -> int:
-        return db.create_commitment(text, owner=None, created_by="oleh", source_message_id=mid)
+        return db.create_todo(text, owner=None, created_by="oleh", source_message_id=mid)
 
     a, b, c = new("a"), new("b"), new("c")
-    assert [x.id for x in db.open_commitments()] == [c, b, a]  # newest first until someone drags
+    assert [x.id for x in db.open_todos()] == [c, b, a]  # newest first until someone drags
 
-    db.reorder_commitments([c, a, 999, b])  # 999: no such commitment, ignored
-    assert [(x.id, x.position) for x in db.open_commitments()] == [(c, 1), (a, 2), (b, 4)]
+    db.reorder_todos([c, a, 999, b])  # 999: no such todo, ignored
+    assert [(x.id, x.position) for x in db.open_todos()] == [(c, 1), (a, 2), (b, 4)]
     d = new("d")  # new since the page was drawn: on top, until placed
-    assert [x.id for x in db.open_commitments()] == [d, c, a, b]
+    assert [x.id for x in db.open_todos()] == [d, c, a, b]
 
-    db.close_commitment(a, "done")
-    db.reorder_commitments([a, d, c])  # a stale page: a is closed, ignored; b unlisted: on top
-    assert [(x.id, x.position) for x in db.open_commitments()] == [(b, None), (d, 2), (c, 3)]
-    assert [x.id for x in db.recent_done_commitments(5)] == [a]
+    db.close_todo(a, "done")
+    db.reorder_todos([a, d, c])  # a stale page: a is closed, ignored; b unlisted: on top
+    assert [(x.id, x.position) for x in db.open_todos()] == [(b, None), (d, 2), (c, 3)]
+    assert [x.id for x in db.recent_done_todos(5)] == [a]
 
 
-def test_commitments_get_a_position_column(tmp_path: Path) -> None:
-    """A database from before the hand-set order has no `position`; the first start adds it."""
+def test_commitments_become_todos(tmp_path: Path) -> None:
+    """A database from before 2026-09-12 has `commitments` with a time or a window; the
+    first start copies them into `todos` with a deadline day and drops the old table."""
     path = tmp_path / "old.db"
     conn = sqlite3.connect(path)
     conn.executescript(
         """
         CREATE TABLE commitments (id INTEGER PRIMARY KEY, text TEXT NOT NULL, owner TEXT,
-          status TEXT NOT NULL, due_at TEXT, due_from TEXT, due_to TEXT, created_by TEXT NOT NULL,
-          created_at TEXT NOT NULL, source_message_id INTEGER NOT NULL, closed_at TEXT);
+          status TEXT NOT NULL, due_at TEXT, due_from TEXT, due_to TEXT, position INTEGER,
+          created_by TEXT NOT NULL, created_at TEXT NOT NULL, source_message_id INTEGER NOT NULL,
+          closed_at TEXT);
         INSERT INTO commitments VALUES
-          (1, 'Стоматолог', NULL, 'open', NULL, NULL, NULL, 'oleh', '2026-09-10T09:00:00Z', 1,
-           NULL);
+          (1, 'Стоматолог', 'anna', 'open', '2026-09-10T21:30:00Z', NULL, NULL, NULL, 'oleh',
+           '2026-09-10T09:00:00Z', 1, NULL),
+          (2, 'Вікно', NULL, 'open', NULL, '2026-09-14', '2026-09-20', 2, 'oleh',
+           '2026-09-10T09:00:00Z', 1, NULL),
+          (3, 'Без дати', NULL, 'done', NULL, NULL, NULL, NULL, 'oleh',
+           '2026-09-10T09:00:00Z', 1, '2026-09-11T09:00:00Z');
         """
     )
     conn.close()
 
     db = Database(path)
-    assert [(c.id, c.position) for c in db.open_commitments()] == [(1, None)]
-    db.reorder_commitments([1])
+    # 21:30Z is 00:30 of the next day in Kyiv: the deadline is that day; a window ends there
+    assert [(t.id, t.due, t.position) for t in db.open_todos()] == [
+        (1, "2026-09-11", None),
+        (2, "2026-09-20", 2),
+    ]
+    done = db.get_todo(3)
+    assert done and done.status == "done" and done.due is None
+    assert done.closed_at == "2026-09-11T09:00:00Z"
+    tables = {r[0] for r in db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "commitments" not in tables and "todos" in tables
     db.close()
-    again = Database(path)  # the second start finds the column in place
-    c = again.get_commitment(1)
-    assert c and c.position == 1
+    again = Database(path)  # the second start finds nothing to do
+    assert [t.id for t in again.open_todos()] == [1, 2]
     again.close()
 
 
@@ -120,32 +133,32 @@ def test_today_lists_latest_per_member(db: Database) -> None:
     }
 
 
-def test_commitment_lifecycle(db: Database) -> None:
+def test_todo_lifecycle(db: Database) -> None:
     mid = db.insert_message("anna", "anna", "завтра стоматолог")
-    cid = db.create_commitment(
+    cid = db.create_todo(
         "Стоматолог",
         owner="anna",
         created_by="anna",
         source_message_id=mid,
-        due_at="2026-09-10T12:30:00Z",
+        due="2026-09-10",
     )
-    assert [c.id for c in db.open_commitments()] == [cid]
+    assert [c.id for c in db.open_todos()] == [cid]
 
-    assert db.update_commitment(cid, due_to="2026-09-23") is True
-    assert db.update_commitment(cid, bogus="x") is False
-    c = db.get_commitment(cid)
-    assert c and c.due_to == "2026-09-23" and c.due_at == "2026-09-10T12:30:00Z"
+    assert db.update_todo(cid, due="2026-09-23") is True
+    assert db.update_todo(cid, bogus="x") is False
+    c = db.get_todo(cid)
+    assert c and c.due == "2026-09-23"
 
-    assert db.close_commitment(cid, "done") is True
-    assert db.close_commitment(cid, "done") is False  # not open any more
-    assert db.close_commitment(999, "done") is False  # does not exist
-    assert db.open_commitments() == []
-    assert db.update_commitment(cid, text="x") is False
-    c = db.get_commitment(cid)
+    assert db.close_todo(cid, "done") is True
+    assert db.close_todo(cid, "done") is False  # not open any more
+    assert db.close_todo(999, "done") is False  # does not exist
+    assert db.open_todos() == []
+    assert db.update_todo(cid, text="x") is False
+    c = db.get_todo(cid)
     assert c and c.status == "done" and c.closed_at
 
-    assert [x.id for x in db.search_commitments(r"\bстомат")] == [cid]
-    assert db.search_commitments(r"\bтомат") == []  # a word start, not a substring
+    assert [x.id for x in db.search_todos(r"\bстомат")] == [cid]
+    assert db.search_todos(r"\bтомат") == []  # a word start, not a substring
 
 
 def test_messages_order_and_last_user_message(db: Database) -> None:

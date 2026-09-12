@@ -98,9 +98,7 @@ def test_documents_are_files_newest_first_with_their_records(db: Database) -> No
     gone = db.create_entry("помилкова", "2026-09-11", "oleh", m1)
     db.delete_entry(gone)
     i1 = _item(db, "Сервісна книжка", m1)
-    c1 = db.create_commitment(
-        "Записатись на ТО", owner=None, created_by="oleh", source_message_id=m1
-    )
+    c1 = db.create_todo("Записатись на ТО", owner=None, created_by="oleh", source_message_id=m1)
     ev = db.create_event(
         "Тренінг", who=None, created_by="oleh", source_message_id=m1, date_from="2026-09-20"
     )
@@ -111,8 +109,9 @@ def test_documents_are_files_newest_first_with_their_records(db: Database) -> No
             ("entry", "create", gone, True),
             ("item", "create", i1, True),
             ("item", "create", i1, True),  # named twice: shown once
-            ("commitment", "update", c1, True),
-            ("commitment", "update", 999, True),  # unknown id: skipped
+            ("todo", "update", c1, True),
+            ("commitment", "update", c1, True),  # a log from before 2026-09-12: the same row
+            ("todo", "update", 999, True),  # unknown id: skipped
             ("event", "create", ev, True),
             ("reminder", "create", 3, True),  # not shown
         ),
@@ -128,7 +127,7 @@ def test_documents_are_files_newest_first_with_their_records(db: Database) -> No
     assert docs[1].file.description == "Рахунок СТО «Автомайстер» на 4 500 грн."
     assert [e.id for e in docs[1].entries] == [e1]
     assert [i.id for i in docs[1].items] == [i1]
-    assert [c.id for c in docs[1].commitments] == [c1]
+    assert [c.id for c in docs[1].todos] == [c1]
     assert [e.id for e in docs[1].events] == [ev] and docs[1].has_records
     assert documents(db, limit=1)[0].file.id == a2
 

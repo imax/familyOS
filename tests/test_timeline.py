@@ -1,4 +1,4 @@
-"""The web home: everything dated in one stream by day, undated commitments apart."""
+"""The web home: the calendar by day, the todos apart from it."""
 
 import html
 from datetime import date, datetime
@@ -56,12 +56,12 @@ def test_build_timeline(family: Family) -> None:
         _e(6, text="Минуле", starts_at="2026-09-05T10:00:00Z"),  # over: not on the page
         _e(7, text="Скасоване", starts_at="2026-09-11T10:00:00Z", status="cancelled"),
     ]
-    commitments = [
-        _c(1, text="Квіти", owner="anna", due_at="2026-09-11T06:00:00Z"),  # tomorrow 09:00
-        _c(2, text="Проспали", due_at="2026-09-10T04:00:00Z"),  # today 07:00, passed: overdue
-        _c(3, text="Вікно", due_from="2026-09-08", due_to="2026-09-20"),  # open: today, «до»
-        _c(4, text="Було до вчора", due_to="2026-09-09"),  # overdue, and first: oldest due
-        _c(5, text="Майбутнє вікно", due_from="2026-09-12", due_to="2026-09-14"),
+    todos = [
+        _c(1, text="Квіти", owner="anna", due="2026-09-11"),  # tomorrow
+        _c(2, text="Проспали", due="2026-09-09"),  # yesterday: overdue
+        _c(3, text="Сьогодні", due="2026-09-10"),
+        _c(4, text="Було давно", due="2026-09-01"),  # overdue, and first: the oldest deadline
+        _c(5, text="Далі", due="2026-09-14"),
         _c(6, text="Без дати", owner="oleh"),
         _c(7, text="Закрите", status="done"),
     ]
@@ -70,10 +70,16 @@ def test_build_timeline(family: Family) -> None:
         _r(2, text="Давно", at="2026-09-01T05:00:00Z"),  # pending but past: today
         _r(3, text="Надіслане", at="2026-09-11T05:00:00Z", status="sent"),
     ]
-    t = build_timeline(events, commitments, reminders, NOW, family)
+    t = build_timeline(events, todos, reminders, NOW, family)
 
-    assert [(r.id, r.note) for r in t.overdue] == [(4, "09.09"), (2, "10.09 07:00")]
-    assert t.overdue[1].ics_url == "/commitments/2.ics" and t.overdue[1].time == ""
+    assert [(r.id, r.note) for r in t.overdue] == [(4, "до 01.09"), (2, "до 09.09")]
+    assert t.overdue[1].ics_url == "/todos/2.ics" and t.overdue[1].time == ""
+    assert [(r.id, r.note, r.who) for r in t.dated] == [
+        (3, "сьогодні", ""),
+        (1, "завтра", "Анна"),
+        (5, "до 14.09", ""),
+    ]
+    assert [(r.id, r.who, r.ics_url) for r in t.undated] == [(6, "Олег", None)]
 
     assert [d.title for d in t.days] == [
         "Сьогодні, четвер 10.09",
@@ -86,25 +92,21 @@ def test_build_timeline(family: Family) -> None:
         ("event", 3, "весь день", "до 19.09"),
         ("reminder", 2, "08:00", ""),
         ("event", 2, "10:00", ""),
-        ("commitment", 3, "", "до 20.09"),
     ]
     assert [(r.kind, r.id, r.time, r.note, r.who) for r in tomorrow.rows] == [
         ("reminder", 1, "08:00", "", "Анна"),
-        ("commitment", 1, "09:00", "", "Анна"),
         ("event", 1, "15:30", "до 16:30", "Анна"),
     ]
     assert today.rows[0].all_day and not today.rows[2].all_day
     assert today.rows[1].who == "усім"
-    assert tomorrow.rows[1].ics_url == "/commitments/1.ics"
-    assert tomorrow.rows[2].ics_url == "/events/1.ics"
-    assert [(r.id, r.note) for r in saturday.rows] == [(4, ""), (5, "до 14.09")]
+    assert tomorrow.rows[1].ics_url == "/events/1.ics"
+    assert [(r.id, r.note) for r in saturday.rows] == [(4, "")]
     assert [(r.kind, r.id, r.time) for r in october.rows] == [("event", 5, "15:30")]
-    assert [(r.id, r.who, r.ics_url) for r in t.undated] == [(6, "Олег", None)]
 
 
 def test_empty_timeline_keeps_today(family: Family) -> None:
     t = build_timeline([], [], [], NOW, family)
-    assert t.overdue == [] and t.undated == []
+    assert t.overdue == [] and t.dated == [] and t.undated == []
     assert [(d.title, d.rows) for d in t.days] == [("Сьогодні, четвер 10.09", [])]
 
 
@@ -128,25 +130,25 @@ def test_web_home_is_a_timeline(
         created_by="oleh",
         source_message_id=mid,
     )
-    db.create_commitment(
-        "Купити квіти", owner="anna", created_by="oleh", source_message_id=mid, due_to="2026-09-09"
+    db.create_todo(
+        "Купити квіти", owner="anna", created_by="oleh", source_message_id=mid, due="2026-09-09"
     )
-    db.create_commitment(
+    db.create_todo(
         "Подзвонити газовику Петру", owner=None, created_by="oleh", source_message_id=mid
     )
     db.create_entry("Газовик Петро", "2026-09-10", "oleh", mid)
     db.create_event(
         "Буріння", who=None, created_by="oleh", source_message_id=mid, date_from="2026-09-15"
     )
-    done = db.create_commitment(
-        "Замовити воду", owner="anna", created_by="anna", source_message_id=mid
-    )
-    db.close_commitment(done, "done")
+    done = db.create_todo("Замовити воду", owner="anna", created_by="anna", source_message_id=mid)
+    db.close_todo(done, "done")
     client = TestClient(build_web(_settings(), family, db))
 
     home = html.unescape(client.get("/", headers=_auth()).text)  # «п'ятниця» is escaped
     assert home.index('<h2 class="overdue">Прострочено</h2>') < home.index("Купити квіти")
-    assert "· 09.09 · Анна" in home
+    assert "· до 09.09 · Анна" in home
+    assert home.index("Буріння") < home.index("Прострочено")  # the calendar, then the todos
+    assert "<h2>З дедлайном</h2>" not in home  # nothing due from today on
     assert home.index("Сьогодні, четвер 10.09") < home.index("Завтра, п'ятниця 11.09")
     assert home.index("Завтра") < home.index("14:30</span>") < home.index("15:30</span>")
     assert "Стоматолог <a" in home and "· до 16:30 · Анна" in home
@@ -171,15 +173,15 @@ def test_web_undated_order_by_dragging(
     """Two or more undated rows get a «⋮⋮» handle; the drag posts the ids in their new order."""
     freeze_web_clock(monkeypatch, NOW)
     mid = db.insert_message("oleh", "oleh", "...")
-    db.create_commitment(
+    db.create_todo(
         "Квіти",
         owner="anna",
         created_by="oleh",
         source_message_id=mid,
-        due_at="2026-09-11T06:00:00Z",
+        due="2026-09-11",
     )
-    first = db.create_commitment("Перша", owner=None, created_by="oleh", source_message_id=mid)
-    second = db.create_commitment("Друга", owner=None, created_by="oleh", source_message_id=mid)
+    first = db.create_todo("Перша", owner=None, created_by="oleh", source_message_id=mid)
+    second = db.create_todo("Друга", owner=None, created_by="oleh", source_message_id=mid)
     client = TestClient(build_web(_settings(), family, db))
 
     home = client.get("/", headers=_auth()).text
@@ -188,64 +190,62 @@ def test_web_undated_order_by_dragging(
     assert '<ul class="rows sortable">' in undated and f'data-id="{first}"' in undated
     assert home.count('class="grip"') == 2 == undated.count('class="grip"')  # dated rows: none
 
-    r = client.post("/commitments/order", data={"ids": [first, second]}, headers=_auth())
+    r = client.post("/todos/order", data={"ids": [first, second]}, headers=_auth())
     assert r.status_code == 204
     home = client.get("/", headers=_auth()).text
     undated = home[home.index("<h2>Без дати</h2>") :]
     assert undated.index("Перша") < undated.index("Друга")
-    assert client.post("/commitments/order", data={"ids": [first]}).status_code == 401
+    assert client.post("/todos/order", data={"ids": [first]}).status_code == 401
 
-    db.close_commitment(second, "done")  # one row left: nothing to drag
+    db.close_todo(second, "done")  # one row left: nothing to drag
     home = client.get("/", headers=_auth()).text
     assert '<ul class="rows sortable">' not in home and 'class="grip"' not in home
 
 
-def test_web_commitment_text_edit(
-    db: Database, family: Family, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_web_todo_text_edit(db: Database, family: Family, monkeypatch: pytest.MonkeyPatch) -> None:
     freeze_web_clock(monkeypatch, NOW)
     mid = db.insert_message("oleh", "oleh", "хліб")
-    cid = db.create_commitment("Купити хліб", owner=None, created_by="oleh", source_message_id=mid)
+    cid = db.create_todo("Купити хліб", owner=None, created_by="oleh", source_message_id=mid)
     client = TestClient(build_web(_settings(), family, db))
 
     home = client.get("/", headers=_auth()).text
-    assert f'<li class="commitment" data-id="{cid}">' in home
+    assert f'<li class="todo" data-id="{cid}">' in home
     assert '<span class="text">Купити хліб</span>' in home
     assert '<button class="edit" type="button" title="Змінити текст">✎</button>' in home
 
-    url = f"/commitments/{cid}/text"
+    url = f"/todos/{cid}/text"
     r = client.post(url, data={"text": "  Купити хліб і молоко\n"}, headers=_auth())
     assert r.status_code == 204
-    assert db.get_commitment(cid).text == "Купити хліб і молоко"  # type: ignore[union-attr]
+    assert db.get_todo(cid).text == "Купити хліб і молоко"  # type: ignore[union-attr]
     assert "Купити хліб і молоко" in client.get("/", headers=_auth()).text
     assert client.post(url, data={"text": "  "}, headers=_auth()).status_code == 400
-    missing = client.post("/commitments/999/text", data={"text": "x"}, headers=_auth())
+    missing = client.post("/todos/999/text", data={"text": "x"}, headers=_auth())
     assert missing.status_code == 404
     assert client.post(url, data={"text": "x"}).status_code == 401
 
-    db.close_commitment(cid, "done")  # closed ones are not editable
+    db.close_todo(cid, "done")  # closed ones are not editable
     assert client.post(url, data={"text": "x"}, headers=_auth()).status_code == 404
-    assert db.get_commitment(cid).text == "Купити хліб і молоко"  # type: ignore[union-attr]
+    assert db.get_todo(cid).text == "Купити хліб і молоко"  # type: ignore[union-attr]
 
 
-def test_web_commitment_done(db: Database, family: Family, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_web_todo_done(db: Database, family: Family, monkeypatch: pytest.MonkeyPatch) -> None:
     freeze_web_clock(monkeypatch, NOW)
     monkeypatch.setattr("family_ea.db.utc_now_iso", lambda: "2026-09-10T12:00:00Z")
     mid = db.insert_message("oleh", "oleh", "хліб")
-    cid = db.create_commitment("Купити хліб", owner=None, created_by="oleh", source_message_id=mid)
+    cid = db.create_todo("Купити хліб", owner=None, created_by="oleh", source_message_id=mid)
     client = TestClient(build_web(_settings(), family, db))
     home = client.get("/", headers=_auth()).text
     assert '<span class="mark" title="Торкнись, коли зроблено">☐</span>' in home
 
-    url = f"/commitments/{cid}/done"
+    url = f"/todos/{cid}/done"
     assert client.post(url).status_code == 401
     assert client.post(url, headers=_auth()).status_code == 204
-    c = db.get_commitment(cid)
+    c = db.get_todo(cid)
     assert c is not None and c.status == "done" and c.closed_at == "2026-09-10T12:00:00Z"
     home = client.get("/", headers=_auth()).text
     assert home.index("<h2>Зроблено</h2>") < home.index("Купити хліб")
     assert client.post(url, headers=_auth()).status_code == 404  # once; nothing reopens
-    assert client.post("/commitments/999/done", headers=_auth()).status_code == 404
+    assert client.post("/todos/999/done", headers=_auth()).status_code == 404
 
 
 def test_web_home_boards_own_first(

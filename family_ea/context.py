@@ -1,4 +1,4 @@
-"""Deterministic context for the LLM, the event agenda, commitment buckets, the digest,
+"""Deterministic context for the LLM, the event agenda, todo buckets, the digest,
 the web timeline.
 
 Everything here is plain code: what is "today", what is "overdue", which journal
@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta
 from itertools import groupby
 from zoneinfo import ZoneInfo
 
-from .db import Commitment, Database, Entry, Event, Item, Member, Message, Reminder, TodayList
+from .db import Database, Entry, Event, Item, Member, Message, Reminder, TodayList, Todo
 from .family import Family
 
 RECENT_WINDOW_DAYS = 2  # notes and items this fresh are in every LLM context; older: search
@@ -51,14 +51,9 @@ def fmt_date(iso_date: str) -> str:
     return date.fromisoformat(iso_date).strftime("%d.%m")
 
 
-def fmt_due(c: Commitment, tz: ZoneInfo) -> str:
-    if c.due_at:
-        return fmt_dt(c.due_at, tz)
-    if c.due_from and c.due_to and c.due_from != c.due_to:
-        return f"{fmt_date(c.due_from)}–{fmt_date(c.due_to)}"
-    if c.due_from or c.due_to:
-        return fmt_date(c.due_from or c.due_to or "")
-    return ""
+def fmt_due(t: Todo) -> str:
+    """The deadline as '20.09'; '' when undated."""
+    return fmt_date(t.due) if t.due else ""
 
 
 # --- events -------------------------------------------------------------------
@@ -151,64 +146,48 @@ def build_agenda(items: list[Event], now: datetime, past_days: int = PAST_EVENT_
     return a
 
 
-# --- commitment buckets -------------------------------------------------------
+# --- todo buckets ---------------------------------------------------------------
 
 
 @dataclass
 class Buckets:
-    today: list[Commitment] = field(default_factory=list)
-    overdue: list[Commitment] = field(default_factory=list)
-    open: list[Commitment] = field(default_factory=list)  # no dates
-    later: list[Commitment] = field(default_factory=list)  # dated, in the future
+    today: list[Todo] = field(default_factory=list)
+    overdue: list[Todo] = field(default_factory=list)
+    open: list[Todo] = field(default_factory=list)  # no deadline
+    later: list[Todo] = field(default_factory=list)  # a deadline after today
 
 
-def bucket_commitments(items: list[Commitment], now: datetime) -> Buckets:
-    """Split open commitments into today / overdue / open / later relative to `now`.
+def bucket_todos(items: list[Todo], now: datetime) -> Buckets:
+    """Split open todos into today / overdue / open / later relative to `now`.
 
-    `now` must be timezone-aware in the family timezone; "today" is its date.
+    `now` must be timezone-aware in the family timezone; "today" is its date. Dated ones
+    are sorted by deadline, the undated keep their order (the hand-set one).
     """
-    today = now.date()
+    today = now.date().isoformat()
     b = Buckets()
-    for c in items:
-        if not c.is_open:
+    for t in items:
+        if not t.is_open:
             continue
-        if c.due_at:
-            due = parse_iso(c.due_at).astimezone(now.tzinfo)
-            if due < now:
-                b.overdue.append(c)
-            elif due.date() == today:
-                b.today.append(c)
-            else:
-                b.later.append(c)
-        elif c.due_from or c.due_to:
-            start = date.fromisoformat(c.due_from or c.due_to or "")
-            end = date.fromisoformat(c.due_to or c.due_from or "")
-            if end < today:
-                b.overdue.append(c)
-            elif start <= today:
-                b.today.append(c)
-            else:
-                b.later.append(c)
+        if not t.due:
+            b.open.append(t)
+        elif t.due < today:
+            b.overdue.append(t)
+        elif t.due == today:
+            b.today.append(t)
         else:
-            b.open.append(c)
-
-    def sort_key(c: Commitment) -> str:
-        return c.due_at or c.due_to or c.due_from or c.created_at
-
-    b.today.sort(key=sort_key)
-    b.overdue.sort(key=sort_key)
-    b.later.sort(key=sort_key)
+            b.later.append(t)
+    for dated in (b.today, b.overdue, b.later):
+        dated.sort(key=lambda t: (t.due or "", t.id))
     return b
 
 
-def commitment_line(c: Commitment, family: Family, tz: ZoneInfo, with_id: bool = True) -> str:
-    parts = [f"[#{c.id}] " if with_id else "", c.text]
+def todo_line(t: Todo, family: Family, with_id: bool = True) -> str:
+    parts = [f"[#{t.id}] " if with_id else "", t.text]
     meta = []
-    if c.owner:
-        meta.append(family.display_name(c.owner))
-    due = fmt_due(c, tz)
-    if due:
-        meta.append(due)
+    if t.owner:
+        meta.append(family.display_name(t.owner))
+    if t.due:
+        meta.append(f"до {fmt_due(t)}")
     if meta:
         parts.append(f" ({', '.join(meta)})")
     return "".join(parts)
@@ -302,8 +281,8 @@ def _digest_lines(
     def ev(e: Event) -> str:
         return f"- {event_line(e, family, tz, with_id=with_ids, with_date=False)}"
 
-    def cm(c: Commitment) -> str:
-        return f"- {commitment_line(c, family, tz, with_id=with_ids)}"
+    def td(t: Todo) -> str:
+        return f"- {todo_line(t, family, with_id=with_ids)}"
 
     lines: list[str] = [*today]
     if a.today:
@@ -311,11 +290,11 @@ def _digest_lines(
     if a.tomorrow:
         lines += ["Завтра:", *map(ev, a.tomorrow)]
     if b.today:
-        lines += ["Справи на сьогодні:", *map(cm, b.today)]
+        lines += ["Задачі на сьогодні:", *map(td, b.today)]
     if b.overdue:
-        lines += ["Прострочено:", *map(cm, b.overdue)]
+        lines += ["Прострочено:", *map(td, b.overdue)]
     if include_open and b.open:
-        lines += ["Без дати:", *map(cm, b.open[:max_open])]
+        lines += ["Без дати:", *map(td, b.open[:max_open])]
         if len(b.open) > max_open:
             lines.append(f"- і ще {len(b.open) - max_open}")
     return lines
@@ -338,7 +317,7 @@ def digest_text(
     today: list[str] | None = None,
 ) -> str | None:
     """The morning push, and /today: the boards (`today`, from today_lines, the recipient's
-    own first), today's and tomorrow's events, today's and overdue commitments. Never the
+    own first), today's and tomorrow's events, today's and overdue todos. Never the
     undated ones: they live on the web. None when there is nothing to say: an empty morning
     stays silent. Deterministic on purpose: presentation, not understanding."""
     lines = _digest_lines(
@@ -354,17 +333,17 @@ def digest_text(
 
 @dataclass(frozen=True)
 class Row:
-    """One line of the timeline, ready to render: a planned event, an open commitment or a
-    pending reminder. Everything is formatted here; the template only lays it out."""
+    """One line of the home page, ready to render: a planned event, a pending reminder or
+    an open todo. Everything is formatted here; the template only lays it out."""
 
-    kind: str  # 'event' | 'commitment' | 'reminder'
+    kind: str  # 'event' | 'reminder' | 'todo'
     id: int
     text: str
-    time: str = ""  # '16:00' (a start); ALL_DAY for an all-day event; '' for an untimed commitment
+    time: str = ""  # '16:00' (a start); ALL_DAY for an all-day event; '' for a todo
     all_day: bool = False  # the template styles the label, not a time
-    note: str = ""  # 'до 17:00' / 'до 19.09': an end still ahead; the due when overdue
+    note: str = ""  # 'до 17:00' / 'до 19.09': an end still ahead; a todo's deadline
     who: str = ""  # display name; 'усім' for a reminder to everyone; '' when nobody in particular
-    ics_url: str | None = None  # «📅»: an event or a dated commitment
+    ics_url: str | None = None  # «📅»: an event or a dated todo
 
 
 @dataclass
@@ -376,14 +355,13 @@ class Day:
 
 @dataclass
 class Timeline:
-    """The web home, Things-style: everything dated in one stream by day, the rest apart.
+    """The web home: the calendar (every day with a planned event or a pending reminder,
+    today always, even empty), then the todos apart from it: past their deadline, with a
+    deadline from today on, and without one, in the hand-set order."""
 
-    Overdue commitments on top; then every day that has something, today always, even
-    empty; then the commitments without a date.
-    """
-
-    overdue: list[Row] = field(default_factory=list)
     days: list[Day] = field(default_factory=list)
+    overdue: list[Row] = field(default_factory=list)
+    dated: list[Row] = field(default_factory=list)
     undated: list[Row] = field(default_factory=list)
 
 
@@ -397,26 +375,37 @@ def day_title(d: date, today: date) -> str:
     return f"{name.capitalize()} {d:%d.%m}"
 
 
+def due_note(due: date, today: date) -> str:
+    """A todo's deadline next to its text: 'сьогодні', 'завтра', else 'до 19.09'."""
+    if due == today:
+        return "сьогодні"
+    if due == today + timedelta(days=1):
+        return "завтра"
+    return f"до {due:%d.%m}"
+
+
 def build_timeline(
     events: list[Event],
-    commitments: list[Commitment],
+    todos: list[Todo],
     reminders: list[Reminder],
     now: datetime,
     family: Family,
 ) -> Timeline:
-    """Place planned events, open commitments and pending reminders on days.
+    """Place planned events and pending reminders on days; sort the open todos out.
 
-    A thing still running (a multi-day event, an open window) sits on today with «до …»;
-    a reminder whose time passed but is still pending (about to be sent) sits on today too.
-    Within a day: all-day events, then timed things by time, then untimed commitments.
-    Undated commitments keep the order they come in: `open_commitments()` gives the hand-set one.
+    A multi-day event still running sits on today with «до …»; a reminder whose time passed
+    but is still pending (about to be sent) sits on today too. Within a day: all-day events,
+    then timed things by time. Todos past their deadline are overdue, oldest first; the
+    others with a deadline come by deadline, nearest first; the undated keep the order they
+    come in: `open_todos()` gives the hand-set one.
     """
     tz = now.tzinfo
     assert isinstance(tz, ZoneInfo)
     today = now.date()
     by_day: dict[date, list[tuple[tuple, Row]]] = {today: []}
-    overdue: list[tuple[str, Row]] = []
-    undated: list[Row] = []
+    overdue: list[tuple[tuple, Row]] = []
+    dated: list[tuple[tuple, Row]] = []
+    t = Timeline()
 
     def place(day: date, key: tuple, row: Row) -> None:
         by_day.setdefault(day, []).append((key, row))
@@ -450,32 +439,6 @@ def build_timeline(
         )
         place(day, (1, start.timestamp(), 0, e.id) if e.starts_at else (0, 0.0, 0, e.id), row)
 
-    for c in commitments:
-        if not c.is_open:
-            continue
-        who = family.display_name(c.owner) if c.owner else ""
-        ics = f"/commitments/{c.id}.ics" if c.has_due else None
-        if c.due_at:
-            due = parse_iso(c.due_at).astimezone(tz)
-            if due < now:
-                late = Row("commitment", c.id, c.text, note=fmt_due(c, tz), who=who, ics_url=ics)
-                overdue.append((c.due_at, late))
-                continue
-            row = Row("commitment", c.id, c.text, time=f"{due:%H:%M}", who=who, ics_url=ics)
-            place(due.date(), (1, due.timestamp(), 2, c.id), row)
-        elif c.due_from or c.due_to:
-            first = date.fromisoformat(c.due_from or c.due_to or "")
-            last = date.fromisoformat(c.due_to or c.due_from or "")
-            if last < today:
-                late = Row("commitment", c.id, c.text, note=fmt_due(c, tz), who=who, ics_url=ics)
-                overdue.append((c.due_to or c.due_from or "", late))
-                continue
-            day = max(first, today)
-            row = Row("commitment", c.id, c.text, note=until_note(last, day), who=who, ics_url=ics)
-            place(day, (2, 0.0, 2, c.id), row)
-        else:
-            undated.append(Row("commitment", c.id, c.text, who=who))
-
     for r in reminders:
         if not r.is_pending:
             continue
@@ -489,11 +452,30 @@ def build_timeline(
         )
         place(max(at.date(), today), (1, at.timestamp(), 1, r.id), row)
 
-    t = Timeline(undated=undated)
-    t.overdue = [row for _, row in sorted(overdue, key=lambda pair: pair[0])]
+    for td in todos:
+        if not td.is_open:
+            continue
+        who = family.display_name(td.owner) if td.owner else ""
+        if not td.due:
+            t.undated.append(Row("todo", td.id, td.text, who=who))
+            continue
+        due = date.fromisoformat(td.due)
+        late = due < today
+        row = Row(
+            "todo",
+            td.id,
+            td.text,
+            note=f"до {due:%d.%m}" if late else due_note(due, today),
+            who=who,
+            ics_url=f"/todos/{td.id}.ics",
+        )
+        (overdue if late else dated).append(((due, td.id), row))
+
     for day in sorted(by_day):
         rows = [row for _, row in sorted(by_day[day], key=lambda pair: pair[0])]
         t.days.append(Day(day, day_title(day, today), rows))
+    t.overdue = [row for _, row in sorted(overdue, key=lambda pair: pair[0])]
+    t.dated = [row for _, row in sorted(dated, key=lambda pair: pair[0])]
     return t
 
 
@@ -626,8 +608,8 @@ def build_context(
     since_iso = since.isoformat(timespec="seconds").replace("+00:00", "Z")
 
     agenda = build_agenda(db.planned_events(), now)
-    open_items = db.open_commitments()
-    buckets = bucket_commitments(open_items, now)
+    open_todos = db.open_todos()
+    buckets = bucket_todos(open_todos, now)
     # The journal can be long; the LLM sees only what was just written and what the message
     # is about. The rest is on the web.
     recent_entries = db.entries_since(since_iso)
@@ -675,8 +657,8 @@ def build_context(
             [f"- {reminder_line(r, family, tz)}" for r in db.pending_reminders()],
         ),
         section(
-            "Відкриті commitments (справи, усі)",
-            [f"- {commitment_line(c, family, tz)}" for c in open_items],
+            "Відкриті задачі (todos, усі; без дати — у порядку з вебу)",
+            [f"- {todo_line(t, family)}" for t in open_todos],
         ),
         section("Сьогодні / прострочено", [render_digest(agenda, buckets, family, tz)]),
         section(

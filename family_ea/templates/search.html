@@ -5,9 +5,9 @@
 <ul>
   {% for e in events %}{% include "_event.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
 </ul>
-<h2>Справи · «{{ q }}»</h2>
+<h2>Задачі · «{{ q }}»</h2>
 <ul>
-  {% for c in commitments %}{% include "_commitment.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
+  {% for c in todos %}{% include "_todo.html" %}{% else %}<li class="empty">нічого</li>{% endfor %}
 </ul>
 <h2>Речі · «{{ q }}»</h2>
 <ul>

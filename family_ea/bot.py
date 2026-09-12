@@ -23,7 +23,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 from .auth import LINK_TTL, sign
 from .config import Settings
 from .context import (
-    bucket_commitments,
+    bucket_todos,
     build_agenda,
     digest_text,
     parse_iso,
@@ -44,7 +44,7 @@ REMINDER_INTERVAL = 60  # seconds between checks for due reminders
 REMINDER_MAX_LATE = timedelta(hours=3)  # due longer ago than this (downtime): missed, not sent
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)  # login links in text: no preview fetch
 COMMANDS = [
-    BotCommand("today", "на сьогодні: списки, події, справи, прострочене"),
+    BotCommand("today", "на сьогодні: списки, події, задачі, прострочене"),
     BotCommand("web", "відкрити веб-сторінку сім'ї"),
     BotCommand("facts", "факти про сім'ю, які бачить асистент"),
     BotCommand("help", "що вміє бот і його команди"),
@@ -62,7 +62,7 @@ def help_text(settings: Settings) -> str:
     commands = "\n".join(f"/{c.command} — {c.description}" for c in COMMANDS)
     return (
         "Пиши або наговорюй що завгодно: що сталося, що треба зробити, де що лежить. "
-        "Фото теж: підпиши, що з ним зробити («додай у нотатки», «зроби з цього справу»), "
+        "Фото теж: підпиши, що з ним зробити («додай у нотатки», «зроби з цього задачу»), "
         "і я перепишу з нього все потрібне; сам знімок лишиться на вебі, у «Документах». "
         "«На сьогодні: пошта, планка, авто» веде твій список на день; додавай і викреслюй "
         f"словами, список партнера теж видно. Питай — відповім з того, що знаю. Щоранку о "
@@ -194,7 +194,7 @@ def build_bot(
     def digest(now: datetime, viewer: Member) -> str | None:
         """The digest for one member, their own board first; None when there is nothing to say."""
         agenda = build_agenda(db.planned_events(), now)
-        buckets = bucket_commitments(db.open_commitments(), now)
+        buckets = bucket_todos(db.open_todos(), now)
         boards = today_blocks(db.current_today_lists(), family, viewer.id, now)
         head = today_lines(boards, viewer.id)
         text = digest_text(agenda, buckets, family, settings.tz, today=head)

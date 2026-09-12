@@ -25,10 +25,10 @@ SPEC_EXAMPLE = {
         },
         {"op": "cancel", "id": 9},
     ],
-    "commitments": [
-        {"op": "create", "text": "Попрати форму Олі", "owner": "anna", "due_from": "2026-09-10"},
-        {"op": "create", "text": "Стоматолог", "owner": "anna", "due_at": "2026-09-10T12:30:00Z"},
-        {"op": "update", "id": 12, "due_to": "2026-09-23"},
+    "todos": [
+        {"op": "create", "text": "Попрати форму Олі", "owner": "anna", "due": "2026-09-10"},
+        {"op": "create", "text": "Купити лампочки", "owner": "anna"},
+        {"op": "update", "id": 12, "due": "2026-09-23"},
         {"op": "close", "id": 7, "status": "done"},
     ],
 }
@@ -40,8 +40,8 @@ def test_schema_accepts_spec_example() -> None:
     assert [j.op for j in r.journal] == ["create", "delete"]
     assert [e.op for e in r.events] == ["create", "cancel"]
     assert LlmResult.model_validate({"reply": "Ок."}).events == []
-    assert r.commitments[1].due_at == "2026-09-10T12:30:00Z"
-    assert LlmResult.model_validate({"reply": "Ок."}).commitments == []
+    assert r.todos[0].due == "2026-09-10" and r.todos[1].due == ""
+    assert LlmResult.model_validate({"reply": "Ок."}).todos == []
 
 
 def test_today_op_replaces_a_board(db: Database, family: Family) -> None:
@@ -97,14 +97,14 @@ def test_apply_ops_spec_example(db: Database, family: Family) -> None:
     assert by[("entry", "delete")].ok is False  # id 5 never existed
     assert by[("event", "create")].ok and db.get_event(1).starts_at == "2026-09-10T12:30:00Z"
     assert by[("event", "cancel")].ok is False  # id 9 never existed
-    assert by[("commitment", "update")].ok is False
-    assert by[("commitment", "close:done")].ok is False
-    created = [a for a in applied if a.kind == "commitment" and a.op == "create"]
+    assert by[("todo", "update")].ok is False
+    assert by[("todo", "close:done")].ok is False
+    created = [a for a in applied if a.kind == "todo" and a.op == "create"]
     assert all(a.ok for a in created) and len(created) == 2
-    open_items = db.open_commitments()  # newest first
-    assert [c.text for c in open_items] == ["Стоматолог", "Попрати форму Олі"]
-    assert open_items[1].owner == "anna" and open_items[1].due_from == "2026-09-10"
-    assert open_items[0].due_at == "2026-09-10T12:30:00Z"
+    open_items = db.open_todos()  # newest first
+    assert [c.text for c in open_items] == ["Купити лампочки", "Попрати форму Олі"]
+    assert open_items[1].owner == "anna" and open_items[1].due == "2026-09-10"
+    assert open_items[0].due is None
 
 
 def test_apply_ops_validates_and_updates(db: Database, family: Family) -> None:
@@ -112,8 +112,8 @@ def test_apply_ops_validates_and_updates(db: Database, family: Family) -> None:
     r = LlmResult.model_validate(
         {
             "reply": "",
-            "commitments": [
-                {"op": "create", "text": "Щось", "owner": "olia", "due_at": "коли-небудь"},
+            "todos": [
+                {"op": "create", "text": "Щось", "owner": "olia", "due": "коли-небудь"},
                 {"op": "create", "text": "   "},
             ],
             "journal": [{"op": "create", "text": ""}],
@@ -122,15 +122,15 @@ def test_apply_ops_validates_and_updates(db: Database, family: Family) -> None:
     applied = apply_ops(db, r, author_id="oleh", message_id=mid, family=family, tz=KYIV)
     assert [a.ok for a in applied] == [False, True, False]
     first = applied[1]
-    assert "unknown owner" in first.note and "bad due_at" in first.note
-    c = db.get_commitment(first.id)
-    assert c and c.owner is None and c.due_at is None
+    assert "unknown owner" in first.note and "bad due" in first.note
+    c = db.get_todo(first.id)
+    assert c and c.owner is None and c.due is None
 
     r2 = LlmResult.model_validate(
         {
             "reply": "",
-            "commitments": [
-                {"op": "update", "id": c.id, "due_at": "2026-09-10T15:30+03:00", "owner": "oleh"},
+            "todos": [
+                {"op": "update", "id": c.id, "due": "2026-09-10", "owner": "oleh"},
                 {"op": "close", "id": c.id},
                 {"op": "update", "id": c.id, "text": "after close"},
             ],
@@ -142,35 +142,38 @@ def test_apply_ops_validates_and_updates(db: Database, family: Family) -> None:
         ("close:done", True),
         ("update", False),
     ]
-    c = db.get_commitment(c.id)
-    assert c and c.due_at == "2026-09-10T12:30:00Z" and c.owner == "oleh" and c.status == "done"
+    c = db.get_todo(c.id)
+    assert c and c.due == "2026-09-10" and c.owner == "oleh" and c.status == "done"
 
 
-def test_commitment_window_replaces_time_and_back(db: Database, family: Family) -> None:
-    """«Сніданок завтра о 10» then «перенесли на наступний тиждень»: the 10:00 must go."""
+def test_todo_deadline_moves(db: Database, family: Family) -> None:
+    """«Замовити воду до п'ятниці», then «перенесли на наступний тиждень»: the deadline
+    moves; a text-only update leaves it; a time of day in `due` is just its day."""
     mid = db.insert_message("oleh", "oleh", "...")
 
-    def apply(ops: list[dict]) -> None:
-        r = LlmResult.model_validate({"reply": "", "commitments": ops})
-        applied = apply_ops(db, r, author_id="oleh", message_id=mid, family=family, tz=KYIV)
-        assert all(a.ok for a in applied), applied
+    def apply(ops: list[dict]) -> list:
+        r = LlmResult.model_validate({"reply": "", "todos": ops})
+        return apply_ops(db, r, author_id="oleh", message_id=mid, family=family, tz=KYIV)
 
-    apply([{"op": "create", "text": "Сніданок", "due_at": "2026-09-11T10:00:00+03:00"}])
-    apply([{"op": "update", "id": 1, "due_from": "2026-09-14", "due_to": "2026-09-20"}])
-    c = db.get_commitment(1)
-    assert c and (c.due_at, c.due_from, c.due_to) == (None, "2026-09-14", "2026-09-20")
+    assert all(
+        a.ok for a in apply([{"op": "create", "text": "Замовити воду", "due": "2026-09-11"}])
+    )
+    assert all(a.ok for a in apply([{"op": "update", "id": 1, "due": "2026-09-20"}]))
+    t = db.get_todo(1)
+    assert t and t.due == "2026-09-20"
 
-    apply([{"op": "update", "id": 1, "due_at": "2026-09-16T10:00:00+03:00"}])
-    c = db.get_commitment(1)
-    assert c and (c.due_at, c.due_from, c.due_to) == ("2026-09-16T07:00:00Z", None, None)
+    assert all(a.ok for a in apply([{"op": "update", "id": 1, "text": "Замовити воду й каву"}]))
+    t = db.get_todo(1)
+    assert t and t.due == "2026-09-20" and t.text == "Замовити воду й каву"
 
-    apply([{"op": "update", "id": 1, "due_to": "2026-09-19"}])  # «до суботи»: a window again
-    c = db.get_commitment(1)
-    assert c and (c.due_at, c.due_from, c.due_to) == (None, None, "2026-09-19")
-
-    apply([{"op": "update", "id": 1, "text": "Сніданок з командою"}])  # text only: dates untouched
-    c = db.get_commitment(1)
-    assert c and (c.due_at, c.due_from, c.due_to) == (None, None, "2026-09-19")
+    (ok,) = apply([{"op": "update", "id": 1, "due": "2026-09-22T10:00:00+03:00"}])
+    assert ok.ok  # a todo has no clock: the day is kept, the time goes
+    t = db.get_todo(1)
+    assert t and t.due == "2026-09-22"
+    (bad,) = apply([{"op": "update", "id": 1, "due": "коли-небудь"}])
+    assert bad.ok is False and "bad due" in bad.note  # nothing left to update
+    t = db.get_todo(1)
+    assert t and t.due == "2026-09-22"
 
 
 def test_apply_journal_ops(db: Database, family: Family) -> None:

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from .db import Attachment, Commitment, Database, Entry, Event, Item, Message
+from .db import Attachment, Database, Entry, Event, Item, Message, Todo
 
 EXTENSIONS = {
     "image/jpeg": ".jpg",
@@ -103,18 +103,18 @@ class Document:
     message: Message
     entries: list[Entry]
     items: list[Item]
-    commitments: list[Commitment]
+    todos: list[Todo]
     events: list[Event]
 
     @property
     def has_records(self) -> bool:
-        return bool(self.entries or self.items or self.commitments or self.events)
+        return bool(self.entries or self.items or self.todos or self.events)
 
 
 def documents(db: Database, limit: int = 200) -> list[Document]:
-    """Every stored file, newest first, with the notes, items, commitments and events its
+    """Every stored file, newest first, with the notes, items, todos and events its
     message created or changed (deleted notes are left out; a gone item or a closed
-    commitment still shows, marked as such)."""
+    todo still shows, marked as such)."""
     return _documents(db, db.attachments_with_messages(limit=limit))
 
 
@@ -128,13 +128,16 @@ def _documents(db: Database, rows: list[tuple[Attachment, Message]]) -> list[Doc
     for a, m in rows:
         entries: list[Entry] = []
         items: list[Item] = []
-        commitments: list[Commitment] = []
+        todos: list[Todo] = []
         events: list[Event] = []
         seen: set[tuple[str, int]] = set()
         for ap in applied_of(m):
             if not ap.get("ok") or not ap.get("id"):
                 continue
-            key = (str(ap.get("kind")), int(ap["id"]))
+            kind = str(ap.get("kind"))
+            if kind == "commitment":  # logs from before 2026-09-12
+                kind = "todo"
+            key = (kind, int(ap["id"]))
             if key in seen:
                 continue
             seen.add(key)
@@ -146,13 +149,13 @@ def _documents(db: Database, rows: list[tuple[Attachment, Message]]) -> list[Doc
                 i = db.get_item(key[1])
                 if i:
                     items.append(i)
-            elif key[0] == "commitment":
-                c = db.get_commitment(key[1])
+            elif key[0] == "todo":
+                c = db.get_todo(key[1])
                 if c:
-                    commitments.append(c)
+                    todos.append(c)
             elif key[0] == "event":
                 ev = db.get_event(key[1])
                 if ev:
                     events.append(ev)
-        out.append(Document(a, m, entries, items, commitments, events))
+        out.append(Document(a, m, entries, items, todos, events))
     return out

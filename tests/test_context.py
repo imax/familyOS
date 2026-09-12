@@ -4,7 +4,7 @@ import pytest
 
 from family_ea.context import (
     Agenda,
-    bucket_commitments,
+    bucket_todos,
     build_context,
     digest_text,
     fmt_due,
@@ -16,53 +16,47 @@ from family_ea.context import (
     today_lines,
     word_pattern,
 )
-from family_ea.db import Commitment, Database, Member, TodayList
+from family_ea.db import Database, Member, TodayList, Todo
 from family_ea.family import Family
 from tests.conftest import KYIV
 
 
-def _c(id: int, **kw) -> Commitment:
+def _c(id: int, **kw) -> Todo:
     base = dict(
         text=f"c{id}",
         owner=None,
         status="open",
-        due_at=None,
-        due_from=None,
-        due_to=None,
+        due=None,
         created_by="oleh",
         created_at="2026-09-01T00:00:00Z",
         source_message_id=1,
         closed_at=None,
     )
     base.update(kw)
-    return Commitment(id=id, **base)
+    return Todo(id=id, **base)
 
 
-def test_bucket_commitments() -> None:
-    now = datetime(2026, 9, 10, 8, 0, tzinfo=KYIV)  # 05:00Z
+def test_bucket_todos() -> None:
+    now = datetime(2026, 9, 10, 8, 0, tzinfo=KYIV)
     items = [
-        _c(1, due_at="2026-09-10T12:30:00Z"),  # today 15:30 Kyiv
-        _c(2, due_at="2026-09-10T04:00:00Z"),  # today 07:00 Kyiv, already passed -> overdue
-        _c(3, due_at="2026-09-11T09:00:00Z"),  # tomorrow -> later
-        _c(4, due_from="2026-09-08", due_to="2026-09-20"),  # window covers today
-        _c(5, due_from="2026-09-09"),  # was for yesterday, no end -> overdue
-        _c(6, due_to="2026-09-09"),  # ended yesterday -> overdue
-        _c(7, due_from="2026-09-12"),  # future window -> later
-        _c(8),  # no dates -> open
-        _c(9, status="done", due_at="2026-09-10T12:30:00Z"),  # closed, ignored
+        _c(1, due="2026-09-10"),  # today
+        _c(2, due="2026-09-09"),  # yesterday -> overdue
+        _c(3, due="2026-09-11"),  # tomorrow -> later
+        _c(4, due="2026-09-20"),  # later
+        _c(5, due="2026-09-01"),  # long overdue: first
+        _c(6),  # no deadline -> open
+        _c(7, status="done", due="2026-09-10"),  # closed, ignored
     ]
-    b = bucket_commitments(items, now)
-    assert [c.id for c in b.today] == [1, 4]
-    assert {c.id for c in b.overdue} == {2, 5, 6}
-    assert [c.id for c in b.later] == [3, 7]
-    assert [c.id for c in b.open] == [8]
+    b = bucket_todos(items, now)
+    assert [c.id for c in b.today] == [1]
+    assert [c.id for c in b.overdue] == [5, 2]
+    assert [c.id for c in b.later] == [3, 4]
+    assert [c.id for c in b.open] == [6]
 
 
 def test_fmt_due() -> None:
-    assert fmt_due(_c(1, due_at="2026-09-10T12:30:00Z"), KYIV) == "10.09 15:30"
-    assert fmt_due(_c(1, due_from="2026-09-08", due_to="2026-09-20"), KYIV) == "08.09–20.09"
-    assert fmt_due(_c(1, due_from="2026-09-08"), KYIV) == "08.09"
-    assert fmt_due(_c(1), KYIV) == ""
+    assert fmt_due(_c(1, due="2026-09-08")) == "08.09"
+    assert fmt_due(_c(1)) == ""
 
 
 def test_search_stems() -> None:
@@ -81,7 +75,7 @@ def test_search_stems() -> None:
 
 def test_render_digest_caps_open_list(family: Family) -> None:
     now = datetime(2026, 9, 10, 8, 0, tzinfo=KYIV)
-    b = bucket_commitments([_c(i) for i in range(1, 9)], now)
+    b = bucket_todos([_c(i) for i in range(1, 9)], now)
     text = render_digest(Agenda(), b, family, KYIV, max_open=5)
     assert "і ще 3" in text
     assert "Сьогодні" not in text
@@ -90,21 +84,21 @@ def test_render_digest_caps_open_list(family: Family) -> None:
 def test_digest_text(family: Family) -> None:
     now = datetime(2026, 9, 10, 8, 30, tzinfo=KYIV)
     items = [
-        _c(1, text="Стоматолог", owner="anna", due_at="2026-09-10T12:30:00Z"),
-        _c(2, text="Поговорити з Марією", due_to="2026-09-09"),
+        _c(1, text="Стоматолог", owner="anna", due="2026-09-10"),
+        _c(2, text="Поговорити з Марією", due="2026-09-09"),
         _c(3, text="Купити лампочки"),
     ]
-    b = bucket_commitments(items, now)
+    b = bucket_todos(items, now)
     text = digest_text(Agenda(), b, family, KYIV)
     assert text == (
-        "Справи на сьогодні:\n- Стоматолог (Анна, 10.09 15:30)\n"
-        "Прострочено:\n- Поговорити з Марією (09.09)"
+        "Задачі на сьогодні:\n- Стоматолог (Анна, до 10.09)\n"
+        "Прострочено:\n- Поговорити з Марією (до 09.09)"
     )
     assert "Купити лампочки" not in text and "[#" not in text  # no undated ones, no ids
 
-    only_undated = bucket_commitments([_c(3)], now)
+    only_undated = bucket_todos([_c(3)], now)
     assert digest_text(Agenda(), only_undated, family, KYIV) is None  # nothing to say
-    assert digest_text(Agenda(), bucket_commitments([], now), family, KYIV) is None
+    assert digest_text(Agenda(), bucket_todos([], now), family, KYIV) is None
 
 
 def test_today_blocks_and_lines(family: Family) -> None:
@@ -131,7 +125,7 @@ def test_today_blocks_and_lines(family: Family) -> None:
     assert today_lines(empty, "oleh") == []
 
     head = today_lines(blocks, "anna")[:2]
-    nothing = bucket_commitments([], now)
+    nothing = bucket_todos([], now)
     assert digest_text(Agenda(), nothing, family, KYIV, today=head) == (
         "На сьогодні (твоє):\n- вода"
     )
@@ -179,21 +173,20 @@ def test_build_context_sections(
         source_message_id=mid,
     )
     monkeypatch.setattr("family_ea.db.utc_now_iso", lambda: "2026-09-09T12:00:00Z")
-    db.create_commitment(
+    db.create_todo(
         "Поговорити з пані Марією",
         owner="oleh",
         created_by="oleh",
         source_message_id=mid,
-        due_from="2026-09-08",
-        due_to="2026-09-20",
+        due="2026-09-10",
     )
     db.insert_message("bot", "oleh", "Записав.")
     now = datetime(2026, 9, 10, 8, 0, tzinfo=KYIV)
     ctx = build_context(db, family, now, oleh, "Хто ремонтував котел?")
     assert "2026-09-10 08:00 (Europe/Kyiv), четвер" in ctx
     assert "## Сім'я (пишуть боту; решта людей — у фактах і нотатках)\n- oleh: Олег" in ctx
-    assert "[#1] Поговорити з пані Марією (Олег, 08.09–20.09)" in ctx
-    assert "Справи на сьогодні:\n- [#1]" in ctx
+    assert "[#1] Поговорити з пані Марією (Олег, до 10.09)" in ctx
+    assert "Задачі на сьогодні:\n- [#1]" in ctx
     assert "## Події (минулі за 7 днів і всі майбутні)\nнемає" in ctx
     assert "## Нотатки (journal) за останні 2 дні\n- [#1] 09.09, Олег: Газовик Петро" in ctx
     assert "## Старіші нотатки, схожі на повідомлення\n- [#2] 01.07, Анна: Котел чистили" in ctx

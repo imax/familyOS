@@ -1,7 +1,7 @@
 # Family EA
 
 Private family assistant in Telegram: two adults throw text and voice at the bot, it keeps
-one shared state (journal, items, events, commitments, reminders), answers questions from it,
+one shared state (journal, items, events, todos, reminders), answers questions from it,
 pushes a morning digest and sends reminders at the asked time. Deployed to Fly.io, SQLite on a volume, in real use since 2026-09-10.
 
 `docs/spec-v3.md` is the original spec (Ukrainian). It was retired on 2026-09-10: read it
@@ -42,13 +42,13 @@ family_ea/
                 `session` cookie; `pull` signs a `backup` bearer. Nothing is stored.
   family.py     Family over the members table (+ ADMIN_USER_ID); slugify() makes ids from names
   db.py         SQLite schema + all queries; dataclasses Message/Attachment/Entry/Item/Event/
-                Commitment/Reminder/TodayList; item_history is written by the item methods only;
+                Todo/Reminder/TodayList; item_history is written by the item methods only;
                 _migrate() for what CREATE IF NOT EXISTS cannot express;
                 backup_to() is the online backup behind GET /backup.db
   context.py    deterministic LLM context, event agenda (today/tomorrow/later/recent),
-                commitment buckets (today/overdue/open/later), today boards (blocks for the
-                web and the digest head), the digest text, the web timeline (overdue / days /
-                undated), FTS query
+                todo buckets (today/overdue/open/later), today boards (blocks for the
+                web and the digest head), the digest text, the web home (calendar days;
+                overdue / dated / undated todos), FTS query
   llm.py        pydantic output schema, system prompt, the one messages.parse() call
   ops.py        apply LLM ops to db, with validation and an `applied` log
   pipeline.py   store (message, then its photo as an attachment) -> context -> LLM -> ops -> reply
@@ -57,7 +57,7 @@ family_ea/
                 `applied` log), documents() / search_documents() (the rows of the Документи
                 page: file, message, description, every record the message touched)
   transcribe.py OpenAI gpt-4o-transcribe via httpx
-  ical.py       an event or dated commitment -> .ics bytes (timed or all-day)
+  ical.py       an event (timed or all-day) or a dated todo (all-day) -> .ics bytes
   backup.py     the backup archive: a checked db snapshot + the notes as one Markdown + the
                 files under files/, zipped (missing files are reported, not fatal)
   bot.py        python-telegram-bot handlers (/start /help /today /debug /facts /web, text,
@@ -68,9 +68,9 @@ family_ea/
                 places, recent; ?place= ?owner= list), GET /items/:id (history), GET /documents
                 (Документи: every file, newest first), GET /files/:sha256 (cookie or bearer),
                 GET /files.json (bearer; what `pull` mirrors), GET/POST /facts, GET/POST
-                /family, GET /messages, GET /events/:id.ics, GET /commitments/:id.ics,
-                POST /commitments/:id/done and /commitments/:id/text (a tap on the home
-                page), POST /commitments/order (the undated list after a drag), GET /backup.db
+                /family, GET /messages, GET /events/:id.ics, GET /todos/:id.ics,
+                POST /todos/:id/done and /todos/:id/text (a tap on the home
+                page), POST /todos/order (the undated list after a drag), GET /backup.db
                 (bearer token)
   main.py       serve() runs bot + uvicorn in one loop; chat() REPL; pull(); backup(); show_log()
 tests/          deterministic; the LLM is faked, nothing hits the network
@@ -79,11 +79,14 @@ tests/          deterministic; the LLM is faked, nothing hits the network
 ## Principles
 
 - **LLM understands, code executes.** One structured-output call per incoming message
-  returns `reply` plus memory/event/commitment ops. Everything else is deterministic code.
-- **Events and commitments are separate tables, not a `kind` column.** An event happens at a
-  time or on a day and then passes (never overdue, only cancelled); a commitment is done or
-  dropped and can be overdue. Different lifecycles, different data. The same goes for any
-  new kind of thing (reminders): its own table, its own ops.
+  returns `reply` plus memory/event/todo ops. Everything else is deterministic code.
+- **Events and todos are separate tables, not a `kind` column.** An event happens at a
+  time or on a day and then passes (never overdue, only cancelled); a todo is done or
+  dropped, can be overdue, and carries at most a deadline day (`due`), never a time of
+  day: anything with a clock time is an event. (Until 2026-09-12 a todo was a
+  «commitment» with `due_at` or a date window, and the LLM filed appointments there; the
+  single day field is what keeps the two apart.) Different lifecycles, different data. The
+  same goes for any new kind of thing (reminders): its own table, its own ops.
 - **Notes and items stay out of the default context.** Both can be long and many; the LLM
   sees only what changed in the last two days plus the search hits for the incoming
   message, the rest is on the web. Which item a message is about, the LLM decides from
@@ -92,7 +95,7 @@ tests/          deterministic; the LLM is faked, nothing hits the network
 - **The «на сьогодні» board is free text per member, replaced whole.** One `today` op: the
   LLM returns the new text of one member's board, and only when the person addresses the
   board explicitly («на сьогодні: …», «додай у сьогодні …»); everything else stays a
-  commitment or an event. Code never parses the board: it is shown as kept (the web, the
+  todo or an event. Code never parses the board: it is shown as kept (the web, the
   digest head, the viewer's own first) and versioned like facts. Nothing resets it;
   staleness is shown («оновлено вчора»), not acted on.
 - **Original messages are never mutated.** `messages.raw_text` is append-only.
@@ -111,17 +114,17 @@ tests/          deterministic; the LLM is faked, nothing hits the network
 - `messages.chat_with` is the family member whose chat the row belongs to, so bot replies
   and pushes can be attributed in context; `messages.llm_result` holds
   `{model, usage, request_id, output, applied}`, not the bare LLM output.
-- **The web writes about a commitment only through the db methods the LLM ops use**, no
+- **The web writes about a todo only through the db methods the LLM ops use**, no
   parallel logic. Three things: done (a tap on «☐» on the home page, a few seconds to
-  take it back, then `POST /commitments/:id/done`, `db.close_commitment`; the done/drop
+  take it back, then `POST /todos/:id/done`, `db.close_todo`; the done/drop
   buttons of 2026-09-10 were removed as ugly, dropping stays with the LLM), the text («✎»
-  on the row, `POST /commitments/:id/text`, `db.update_commitment`, open ones only)
+  on the row, `POST /todos/:id/text`, `db.update_todo`, open ones only)
   and the order of the undated ones (`position`, dragged on the home page,
-  `db.reorder_commitments`); the LLM never sets the order, and `open_commitments()`
+  `db.reorder_todos`); the LLM never sets the order, and `open_todos()`
   returns it so the timeline, the digest and the LLM context agree. Unplaced ones (new
-  since the last drag) come first, newest first. Nothing reopens a closed commitment.
+  since the last drag) come first, newest first. Nothing reopens a closed todo.
 - **Every push is deterministic and stored.** The morning digest renders each member's
-  board (own first), today's and tomorrow's events, then commitments due today and overdue,
+  board (own first), today's and tomorrow's events, then todos due today and overdue,
   never the undated ones (they are on the web), no LLM call, and is silent when empty;
   `/today` is the same digest now. A reminder is text the LLM wrote at request time,
   sent by a per-minute job when `at` comes, to the one member it is for or to everyone.
@@ -148,7 +151,8 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   `TELEGRAM_BOT_TOKEN`, `WEB_SECRET`, `WEB_URL`. The rest is in `fly.toml`.
 - A deploy ships code only. Tables are created at start (`CREATE TABLE IF NOT EXISTS`);
   anything else goes into `Database._migrate()`, idempotent steps that run at every start
-  (the first one moved `memories` into `journal`, 2026-09-11).
+  (the first one moved `memories` into `journal`, 2026-09-11; the second copied
+  `commitments` into `todos`, 2026-09-12).
 - Local `data/family.db` and production are separate databases; nothing syncs. To look at
   production: `pull`, then `log --db data/prod.db` or `sqlite3 data/prod.db`. Fix production
   data through the bot itself where possible (tell it what changed), not with SQL.
@@ -178,14 +182,14 @@ The backlog may name code.
 - Three kinds of knowledge, three owners: `members` table (who talks to the bot, the
   Telegram allowlist; only `ADMIN_USER_ID` is env, the admin edits the rest on the web),
   `facts` (stable background about the family; the human edits it on the web, the LLM only
-  reads it), journal/items/events/commitments/reminders (everything people tell the bot; the LLM writes
+  reads it), journal/items/events/todos/reminders (everything people tell the bot; the LLM writes
   them).
 - Python 3.12, `uv` for deps, `ruff` for lint/format, `pytest` with `asyncio_mode=auto`.
 - FastAPI modules must not use `from __future__ import annotations`: postponed `Annotated`
   dependencies referencing closure variables break dependency resolution (silent 422s).
 - SQLite `LIKE`/`lower()` are ASCII-only; use the registered `ufold()` for Ukrainian text and
   `regexp()` (Python `re`) for word-prefix search. Search terms come from `context.stems()`,
-  one heuristic behind both the FTS query and the events/commitments pattern.
+  one heuristic behind both the FTS query and the events/todos pattern.
 - Tests that check dates in the context monkeypatch `family_ea.db.utc_now_iso`; otherwise
   they drift with the calendar.
 

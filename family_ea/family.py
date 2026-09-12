@@ -66,7 +66,7 @@ class Family:
 
     @property
     def members(self) -> list[Member]:
-        """People who talk to the bot and can own commitments."""
+        """People who talk to the bot and can own todos."""
         return self.db.list_members()
 
     def add(
