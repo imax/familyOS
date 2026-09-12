@@ -7,11 +7,11 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from family_ea.auth import BACKUP_TTL, sign
+from family_ea.auth import BACKUP_TTL, sign, verify
 from family_ea.db import Database
 from family_ea.family import Family
 from family_ea.files import FileStore
-from family_ea.main import files_next_to, llm_result_lines, pull, show_log
+from family_ea.main import files_next_to, llm_result_lines, pull, show_log, web_login
 from family_ea.web import build_web
 from tests.test_web import JPEG, _auth, _settings
 
@@ -143,3 +143,16 @@ def test_show_log_prints_messages_with_ops(tmp_path: Path, capsys: pytest.Captur
         "    [ok] todo create #1",
     ]
     assert out[4].endswith("bot -> Олег: Записав.")
+
+
+def test_web_login_picks_the_admin_or_the_named_member(db: Database, family: Family) -> None:
+    settings = _settings(admin_user_id=2, port=8765)  # anna's telegram id in the fixture
+    member, link = web_login(settings, family, None)
+    assert member.id == "anna" and link.startswith("http://127.0.0.1:8765/login?t=")
+    token = link.split("t=")[1]
+    assert verify("s", token, "link") == "anna"
+    assert web_login(settings, family, "oleh")[0].id == "oleh"
+    with pytest.raises(SystemExit):
+        web_login(settings, family, "nobody")
+    with pytest.raises(SystemExit):
+        web_login(_settings(web_secret=None), family, None)

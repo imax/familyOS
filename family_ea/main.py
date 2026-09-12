@@ -11,12 +11,12 @@ from pathlib import Path
 import httpx
 import uvicorn
 
-from .auth import BACKUP_TTL, sign
+from .auth import BACKUP_TTL, LINK_TTL, sign
 from .backup import write_archive
 from .bot import build_bot
 from .config import Settings
 from .context import fmt_dt
-from .db import Database
+from .db import Database, Member
 from .family import Family
 from .files import FileStore, sha256_hex
 from .llm import Image, Llm
@@ -83,6 +83,50 @@ async def serve(settings: Settings) -> None:
             await tg_app.updater.stop()
             await tg_app.stop()
             db.close()
+
+
+def web_login(settings: Settings, family: Family, as_user: str | None) -> tuple[Member, str]:
+    """Who `web` logs in and the link that does it: `as_user`, else the admin, else the
+    first member. The link is local (127.0.0.1:PORT), not WEB_URL."""
+    settings.require("web_secret")
+    assert settings.web_secret
+    if as_user:
+        member = family.get(as_user)
+        if member is None:
+            known = [p.id for p in family.members]
+            raise SystemExit(f"unknown family member: {as_user} (have: {known})")
+    else:
+        admin = family.by_telegram_id(settings.admin_user_id) if settings.admin_user_id else None
+        member = admin or (family.members[0] if family.members else None)
+        if member is None:
+            raise SystemExit("no members yet: add one with `chat --as id --name Name`")
+    token = sign(settings.web_secret, "link", member.id, LINK_TTL)
+    return member, f"http://127.0.0.1:{settings.port}/login?t={token}"
+
+
+async def web(settings: Settings, as_user: str | None = None) -> None:
+    """The web view alone on the local db, no bot: a look at a change in a browser before
+    it ships (`make local` first for production data). Prints a login link, then serves."""
+    db = Database(settings.database_path)
+    family = Family(db, settings.admin_user_id)
+    member, link = web_login(settings, family, as_user)
+    print(
+        f"web on http://127.0.0.1:{settings.port}, db={settings.database_path};"
+        f" log in as {member.id} ({member.name}):\n{link}",
+        flush=True,
+    )
+    server = uvicorn.Server(
+        uvicorn.Config(
+            build_web(settings, family, db),
+            host="127.0.0.1",
+            port=settings.port,
+            log_level="warning",
+        )
+    )
+    try:
+        await server.serve()
+    finally:
+        db.close()
 
 
 async def chat(settings: Settings, as_user: str, name: str | None = None) -> None:

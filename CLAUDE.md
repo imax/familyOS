@@ -16,8 +16,10 @@ production:** `pull` then `log` (see Commands).
 ```bash
 uv sync                                   # install (creates .venv)
 uv run python -m family_ea                # run bot + web in one process
+uv run python -m family_ea web            # the web alone on the local db, no bot; prints a login link
 uv run python -m family_ea chat --as oleh --name Олег   # the pipeline as a REPL, no Telegram;
                                           #   `/photo path.jpg caption` sends a photo
+make local                                # pull, then production becomes the local db + files (chat, web)
 uv run python -m family_ea pull           # production db snapshot -> data/prod.db, files -> data/prod-files/
 uv run python -m family_ea backup --db data/prod.db   # zip: db snapshot + notes.md + files -> data/backups/
 uv run python -m family_ea log --db data/prod.db --last 50   # messages + what the LLM did
@@ -154,7 +156,9 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   anything else goes into `Database._migrate()`, idempotent steps that run at every start
   (the first one moved `memories` into `journal`, 2026-09-11; the second copied
   `commitments` into `todos`, 2026-09-12).
-- Local `data/family.db` and production are separate databases; nothing syncs. To look at
+- Local `data/family.db` and production are separate databases; nothing syncs up.
+  `make local` copies production down (db and files) so `web` and `chat` run on real data:
+  that is how a web change is reviewed in a browser before it ships. To look at
   production: `pull`, then `log --db data/prod.db` or `sqlite3 data/prod.db`. Fix production
   data through the bot itself where possible (tell it what changed), not with SQL.
   `fly ssh sftp get` copies the main file but not the `-wal` file with the latest writes;
