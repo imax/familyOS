@@ -37,6 +37,52 @@
   {% endfor %}
 </ul>
 {% endif %}
+<script>
+// A tap on a commitment's text edits it in place: Enter or a tap elsewhere saves, Esc
+// cancels. The new text is shown at once and posted; if the post fails, the page reloads.
+(() => {
+  document.addEventListener("click", (e) => {
+    const span = e.target.closest("li.commitment .text");
+    if (!span || e.target.closest("a")) return;
+    const cell = span.parentElement; // mark, text, calendar link, meta
+    const old = span.textContent;
+    const box = document.createElement("textarea");
+    box.className = "edit";
+    box.value = old;
+    box.rows = 1;
+    const grow = () => {
+      box.style.height = "auto";
+      box.style.height = box.scrollHeight + "px";
+    };
+    let done = false;
+    const finish = (save) => {
+      // Once: Chrome fires the blur while the box is still in the tree, so after Enter or
+      // Esc the blur handler runs inside this very call.
+      if (done) return;
+      done = true;
+      const text = box.value.trim();
+      box.replaceWith(cell);
+      if (!save || !text || text === old) return;
+      span.textContent = text;
+      const body = new URLSearchParams({ text });
+      fetch(`/commitments/${cell.closest("li").dataset.id}/text`, { method: "POST", body }).then(
+        (r) => { if (!r.ok) location.reload(); },
+        () => location.reload(),
+      );
+    };
+    box.addEventListener("input", grow);
+    box.addEventListener("blur", () => finish(true));
+    box.addEventListener("keydown", (k) => {
+      if (k.key === "Escape") finish(false);
+      else if (k.key === "Enter" && !k.shiftKey) { k.preventDefault(); finish(true); }
+    });
+    cell.replaceWith(box);
+    grow();
+    box.focus();
+    box.setSelectionRange(old.length, old.length);
+  });
+})();
+</script>
 {% if sortable %}
 <script>
 // Drag by the handle (pointer events: mouse and touch alike). The row moves in the list as

@@ -290,10 +290,21 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
             raise HTTPException(status_code=404, detail="no such dated commitment")
         return ics_response(commitment_ics(c), c.text)
 
+    @app.post("/commitments/{cid:int}/text", dependencies=[Depends(authed)])
+    async def commitment_text(cid: int, text: Annotated[str, Form()] = "") -> Response:
+        """The text after an edit in place on the home page; open commitments only, through
+        the same db method the LLM's update op uses. Closing stays with the LLM."""
+        text = text.strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="empty text")
+        if not db.update_commitment(cid, text=text):
+            raise HTTPException(status_code=404, detail="no such open commitment")
+        return Response(status_code=204)
+
     @app.post("/commitments/order", dependencies=[Depends(authed)])
     async def commitments_order(ids: Annotated[list[int], Form()]) -> Response:
-        """The «Без дати» list after a drag: every id in its new place. The one thing about
-        a commitment the web writes; the LLM never sets the order."""
+        """The «Без дати» list after a drag: every id in its new place. Besides the text,
+        the one thing about a commitment the web writes; the LLM never sets the order."""
         db.reorder_commitments(ids)
         return Response(status_code=204)
 

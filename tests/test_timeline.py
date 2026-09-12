@@ -151,9 +151,9 @@ def test_web_home_is_a_timeline(
     assert home.index("Завтра") < home.index("14:30</span>") < home.index("15:30</span>")
     assert "Стоматолог <a" in home and "· до 16:30 · Анна" in home
     assert '<span class="mark">⏰</span>Стоматолог о 15:30' in home and "усім" in home
-    assert '<li class="event">' in home and 'href="/events/1.ics"' in home
+    assert '<li class="event" data-id="1">' in home and 'href="/events/1.ics"' in home
     assert 'class="time allday">весь день</span>' in home  # the all-day event on 15.09
-    assert home.index("<h2>Без дати</h2>") < home.index("☐</span>Подзвонити газовику Петру")
+    assert home.index("<h2>Без дати</h2>") < home.index(">Подзвонити газовику Петру</span>")
     assert "Газовик" not in home  # notes have their own page
     assert 'class="id"' not in home  # database ids are not for people
     tail = home[home.index("<h2>Зроблено</h2>") :]  # the last done ones, at the very bottom
@@ -198,6 +198,33 @@ def test_web_undated_order_by_dragging(
     db.close_commitment(second, "done")  # one row left: nothing to drag
     home = client.get("/", headers=_auth()).text
     assert '<ul class="rows sortable">' not in home and 'class="grip"' not in home
+
+
+def test_web_commitment_text_edit(
+    db: Database, family: Family, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    freeze_web_clock(monkeypatch, NOW)
+    mid = db.insert_message("oleh", "oleh", "хліб")
+    cid = db.create_commitment("Купити хліб", owner=None, created_by="oleh", source_message_id=mid)
+    client = TestClient(build_web(_settings(), family, db))
+
+    home = client.get("/", headers=_auth()).text
+    assert f'<li class="commitment" data-id="{cid}">' in home
+    assert '<span class="text" title="Торкнись, щоб змінити">Купити хліб</span>' in home
+
+    url = f"/commitments/{cid}/text"
+    r = client.post(url, data={"text": "  Купити хліб і молоко\n"}, headers=_auth())
+    assert r.status_code == 204
+    assert db.get_commitment(cid).text == "Купити хліб і молоко"  # type: ignore[union-attr]
+    assert "Купити хліб і молоко" in client.get("/", headers=_auth()).text
+    assert client.post(url, data={"text": "  "}, headers=_auth()).status_code == 400
+    missing = client.post("/commitments/999/text", data={"text": "x"}, headers=_auth())
+    assert missing.status_code == 404
+    assert client.post(url, data={"text": "x"}).status_code == 401
+
+    db.close_commitment(cid, "done")  # closed ones are the LLM's: not editable
+    assert client.post(url, data={"text": "x"}, headers=_auth()).status_code == 404
+    assert db.get_commitment(cid).text == "Купити хліб і молоко"  # type: ignore[union-attr]
 
 
 def test_web_home_boards_own_first(
