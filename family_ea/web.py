@@ -290,6 +290,14 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
             raise HTTPException(status_code=404, detail="no such dated commitment")
         return ics_response(commitment_ics(c), c.text)
 
+    @app.post("/commitments/{cid:int}/done", dependencies=[Depends(authed)])
+    async def commitment_done(cid: int) -> Response:
+        """«☐» tapped on the home page: the commitment is done, through the same db method
+        the LLM's close op uses. Dropping stays with the LLM; nothing reopens."""
+        if not db.close_commitment(cid, "done"):
+            raise HTTPException(status_code=404, detail="no such open commitment")
+        return Response(status_code=204)
+
     @app.post("/commitments/{cid:int}/text", dependencies=[Depends(authed)])
     async def commitment_text(cid: int, text: Annotated[str, Form()] = "") -> Response:
         """The text after an edit in place on the home page; open commitments only, through

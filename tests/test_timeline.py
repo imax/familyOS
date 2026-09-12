@@ -210,7 +210,8 @@ def test_web_commitment_text_edit(
 
     home = client.get("/", headers=_auth()).text
     assert f'<li class="commitment" data-id="{cid}">' in home
-    assert '<span class="text" title="Торкнись, щоб змінити">Купити хліб</span>' in home
+    assert '<span class="text">Купити хліб</span>' in home
+    assert '<button class="edit" type="button" title="Змінити текст">✎</button>' in home
 
     url = f"/commitments/{cid}/text"
     r = client.post(url, data={"text": "  Купити хліб і молоко\n"}, headers=_auth())
@@ -222,9 +223,29 @@ def test_web_commitment_text_edit(
     assert missing.status_code == 404
     assert client.post(url, data={"text": "x"}).status_code == 401
 
-    db.close_commitment(cid, "done")  # closed ones are the LLM's: not editable
+    db.close_commitment(cid, "done")  # closed ones are not editable
     assert client.post(url, data={"text": "x"}, headers=_auth()).status_code == 404
     assert db.get_commitment(cid).text == "Купити хліб і молоко"  # type: ignore[union-attr]
+
+
+def test_web_commitment_done(db: Database, family: Family, monkeypatch: pytest.MonkeyPatch) -> None:
+    freeze_web_clock(monkeypatch, NOW)
+    monkeypatch.setattr("family_ea.db.utc_now_iso", lambda: "2026-09-10T12:00:00Z")
+    mid = db.insert_message("oleh", "oleh", "хліб")
+    cid = db.create_commitment("Купити хліб", owner=None, created_by="oleh", source_message_id=mid)
+    client = TestClient(build_web(_settings(), family, db))
+    home = client.get("/", headers=_auth()).text
+    assert '<span class="mark" title="Торкнись, коли зроблено">☐</span>' in home
+
+    url = f"/commitments/{cid}/done"
+    assert client.post(url).status_code == 401
+    assert client.post(url, headers=_auth()).status_code == 204
+    c = db.get_commitment(cid)
+    assert c is not None and c.status == "done" and c.closed_at == "2026-09-10T12:00:00Z"
+    home = client.get("/", headers=_auth()).text
+    assert home.index("<h2>Зроблено</h2>") < home.index("Купити хліб")
+    assert client.post(url, headers=_auth()).status_code == 404  # once; nothing reopens
+    assert client.post("/commitments/999/done", headers=_auth()).status_code == 404
 
 
 def test_web_home_boards_own_first(
@@ -253,4 +274,4 @@ def test_web_home_empty(db: Database, family: Family, monkeypatch: pytest.Monkey
     assert "Прострочено" not in home and "Завтра" not in home
     assert "Відпочиваємо :-)" in home  # today, empty
     assert home.count("нічого") == 1  # undated, empty
-    assert "Зроблено" not in home
+    assert "<h2>Зроблено</h2>" not in home

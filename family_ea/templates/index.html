@@ -38,16 +38,67 @@
 </ul>
 {% endif %}
 <script>
-// A tap on a commitment's text edits it in place: Enter or a tap elsewhere saves, Esc
+// A tap on a commitment's «☐» marks it done: the row greys out at once, and for a few
+// seconds a second tap takes it back; then the close is posted (at once if the page is
+// hidden or left meanwhile). The row stays where it is until the next load, then it is
+// under «Зроблено». Closing is final: nothing reopens a commitment, in the chat either.
+(() => {
+  const DELAY = 4000;
+  const pending = new Map(); // li -> the timer before its close is posted
+  const post = (li) => {
+    pending.delete(li);
+    li.querySelector(".undo")?.remove();
+    fetch(`/commitments/${li.dataset.id}/done`, { method: "POST" }).then(
+      (r) => { if (!r.ok) location.reload(); },
+      () => location.reload(),
+    );
+  };
+  document.addEventListener("click", (e) => {
+    const mark = e.target.closest("li.commitment .mark");
+    if (!mark) return;
+    const li = mark.closest("li");
+    if (pending.has(li)) { // the second tap: take it back
+      clearTimeout(pending.get(li));
+      pending.delete(li);
+      li.classList.remove("closed");
+      li.querySelector(".undo")?.remove();
+      mark.textContent = "☐";
+      return;
+    }
+    if (li.classList.contains("closed")) return; // already posted
+    li.classList.add("closed");
+    mark.textContent = "✓";
+    const undo = document.createElement("span");
+    undo.className = "meta undo";
+    undo.textContent = "· ще раз, щоб повернути";
+    mark.parentElement.append(" ", undo);
+    pending.set(li, setTimeout(() => post(li), DELAY));
+  });
+  const flush = () => {
+    for (const [li, timer] of pending) {
+      clearTimeout(timer);
+      navigator.sendBeacon(`/commitments/${li.dataset.id}/done`);
+    }
+    pending.clear();
+  };
+  document.addEventListener("visibilitychange", () => { if (document.hidden) flush(); });
+  addEventListener("pagehide", flush);
+})();
+</script>
+<script>
+// «✎» on a commitment row edits its text in place: Enter or a tap elsewhere saves, Esc
 // cancels. The new text is shown at once and posted; if the post fails, the page reloads.
 (() => {
   document.addEventListener("click", (e) => {
-    const span = e.target.closest("li.commitment .text");
-    if (!span || e.target.closest("a")) return;
+    const button = e.target.closest("li.commitment .edit");
+    if (!button) return;
+    const li = button.closest("li");
+    if (li.classList.contains("closed")) return;
+    const span = li.querySelector(".text");
     const cell = span.parentElement; // mark, text, calendar link, meta
     const old = span.textContent;
     const box = document.createElement("textarea");
-    box.className = "edit";
+    box.className = "editor";
     box.value = old;
     box.rows = 1;
     const grow = () => {
@@ -62,10 +113,11 @@
       done = true;
       const text = box.value.trim();
       box.replaceWith(cell);
+      li.classList.remove("editing");
       if (!save || !text || text === old) return;
       span.textContent = text;
       const body = new URLSearchParams({ text });
-      fetch(`/commitments/${cell.closest("li").dataset.id}/text`, { method: "POST", body }).then(
+      fetch(`/commitments/${li.dataset.id}/text`, { method: "POST", body }).then(
         (r) => { if (!r.ok) location.reload(); },
         () => location.reload(),
       );
@@ -76,6 +128,7 @@
       if (k.key === "Escape") finish(false);
       else if (k.key === "Enter" && !k.shiftKey) { k.preventDefault(); finish(true); }
     });
+    li.classList.add("editing");
     cell.replaceWith(box);
     grow();
     box.focus();

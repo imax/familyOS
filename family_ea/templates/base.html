@@ -46,13 +46,20 @@
   .today .meta { display: block; margin-left: 0; }
   .done li { color: #888; }
   .today .text { white-space: pre-line; }
-  .sortable li { position: relative; padding-right: 2.2rem; }
-  .grip { position: absolute; right: 0; top: 0; bottom: 0; display: flex; align-items: center; padding: 0 .6rem;
-          color: #aaa; font-size: 1.1rem; letter-spacing: -.15em; cursor: grab; touch-action: none;
+  li.commitment { position: relative; padding-right: 2.4rem; }
+  .sortable li.commitment { padding-right: 4.6rem; }
+  .tools { position: absolute; right: 0; top: 0; bottom: 0; display: flex; align-items: center; }
+  .grip { padding: 0 .6rem; color: #aaa; font-size: 1.1rem; letter-spacing: -.15em; cursor: grab; touch-action: none;
           user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  button.edit { margin: 0; padding: 0 .5rem; border: 0; background: none; color: #aaa; font-size: 1.1rem;
+                line-height: 1; cursor: pointer; -webkit-appearance: none; appearance: none; }
+  li.editing .tools, li.closed .tools { display: none; }
   .dragging { background: #f6f6f6; opacity: .7; }
-  li.commitment .text { cursor: text; }
-  textarea.edit { padding: .1rem .3rem; margin: 0; resize: none; overflow: hidden; line-height: inherit; }
+  li.commitment .mark { cursor: pointer; display: inline-block; padding: .3rem .35rem .3rem .15rem;
+                        margin: -.3rem 0 -.3rem -.15rem; }
+  .rows li.closed, .rows li.closed .meta, .rows li.closed .time { color: #999; }
+  .rows li.closed .text { text-decoration: line-through; }
+  textarea.editor { padding: .1rem .3rem; margin: 0; resize: none; overflow: hidden; line-height: inherit; }
   .dragging .grip { cursor: grabbing; }
   .files { display: flex; flex-wrap: wrap; gap: .4rem; margin: .3rem 0 .1rem; }
   .files img { display: block; height: 5.5rem; border-radius: .3rem; }

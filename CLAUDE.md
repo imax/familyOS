@@ -69,8 +69,8 @@ family_ea/
                 (Документи: every file, newest first), GET /files/:sha256 (cookie or bearer),
                 GET /files.json (bearer; what `pull` mirrors), GET/POST /facts, GET/POST
                 /family, GET /messages, GET /events/:id.ics, GET /commitments/:id.ics,
-                POST /commitments/:id/text (an edit on the home page), POST
-                /commitments/order (the undated list after a drag), GET /backup.db
+                POST /commitments/:id/done and /commitments/:id/text (a tap on the home
+                page), POST /commitments/order (the undated list after a drag), GET /backup.db
                 (bearer token)
   main.py       serve() runs bot + uvicorn in one loop; chat() REPL; pull(); backup(); show_log()
 tests/          deterministic; the LLM is faked, nothing hits the network
@@ -111,15 +111,15 @@ tests/          deterministic; the LLM is faked, nothing hits the network
 - `messages.chat_with` is the family member whose chat the row belongs to, so bot replies
   and pushes can be attributed in context; `messages.llm_result` holds
   `{model, usage, request_id, output, applied}`, not the bare LLM output.
-- **Commitments close only through the LLM `close` op.** Web done/drop buttons were built
-  and removed (2026-09-10, ugly); if closing on the web comes back, it must reuse
-  `db.close_commitment`, no parallel logic. The web writes two things about a commitment,
-  both through the db methods the LLM ops use: the text (a tap on the row on the home
-  page, `POST /commitments/:id/text`, `db.update_commitment`, open ones only) and the
-  order of the undated ones (`position`, dragged on the home page,
+- **The web writes about a commitment only through the db methods the LLM ops use**, no
+  parallel logic. Three things: done (a tap on «☐» on the home page, a few seconds to
+  take it back, then `POST /commitments/:id/done`, `db.close_commitment`; the done/drop
+  buttons of 2026-09-10 were removed as ugly, dropping stays with the LLM), the text («✎»
+  on the row, `POST /commitments/:id/text`, `db.update_commitment`, open ones only)
+  and the order of the undated ones (`position`, dragged on the home page,
   `db.reorder_commitments`); the LLM never sets the order, and `open_commitments()`
   returns it so the timeline, the digest and the LLM context agree. Unplaced ones (new
-  since the last drag) come first, newest first.
+  since the last drag) come first, newest first. Nothing reopens a closed commitment.
 - **Every push is deterministic and stored.** The morning digest renders each member's
   board (own first), today's and tomorrow's events, then commitments due today and overdue,
   never the undated ones (they are on the web), no LLM call, and is silent when empty;
