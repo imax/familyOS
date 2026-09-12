@@ -136,7 +136,6 @@ def test_web_home_is_a_timeline(
     db.create_todo(
         "Подзвонити газовику Петру", owner=None, created_by="oleh", source_message_id=mid
     )
-    db.create_entry("Газовик Петро", "2026-09-10", "oleh", mid)
     db.create_event(
         "Буріння", who=None, created_by="oleh", source_message_id=mid, date_from="2026-09-15"
     )
@@ -156,15 +155,11 @@ def test_web_home_is_a_timeline(
     assert '<li class="event" data-id="1">' in home and 'href="/events/1.ics"' in home
     assert 'class="time allday">весь день</span>' in home  # the all-day event on 15.09
     assert home.index("<h2>Без дати</h2>") < home.index(">Подзвонити газовику Петру</span>")
-    assert "Газовик" not in home  # notes have their own page
     assert 'class="id"' not in home  # database ids are not for people
     tail = home[home.index("<h2>Зроблено</h2>") :]  # the last done ones, at the very bottom
     assert home.index("<h2>Без дати</h2>") < home.index("<h2>Зроблено</h2>")
     assert "✓</span>Замовити воду" in tail and "· Анна ·" in tail
     assert "Замовити воду" not in home[: home.index("<h2>Зроблено</h2>")]
-
-    notes = client.get("/journal", headers=_auth()).text
-    assert "<h2>Вересень 2026</h2>" in notes and "Газовик Петро" in notes and "Олег, 10.09" in notes
 
 
 def test_web_undated_order_by_dragging(

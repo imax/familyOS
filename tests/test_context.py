@@ -8,7 +8,6 @@ from family_ea.context import (
     build_context,
     digest_text,
     fmt_due,
-    fts_query,
     render_digest,
     stale_label,
     stems,
@@ -61,9 +60,9 @@ def test_fmt_due() -> None:
 
 def test_search_stems() -> None:
     # endings go, long words keep a 5-char prefix, function words and digits drop
-    assert fts_query("Хто ремонтував котел?") == '"ремон"* OR "котел"*'
-    assert fts_query("ок") == ""
-    assert fts_query('він сказав "привіт" 12345') == '"сказа"* OR "приві"*'
+    assert stems("Хто ремонтував котел?") == ["ремон", "котел"]
+    assert stems("ок") == []
+    assert stems('він сказав "привіт" 12345') == ["сказа", "приві"]
     assert stems("діти дітям дітьми") == ["діт"]
     assert stems("Коля Колі Колею коли") == ["кол"]  # «коли» is a function word
     assert stems("Марія Марії Марією") == ["марі"]
@@ -151,7 +150,6 @@ def test_build_context_sections(
 ) -> None:
     monkeypatch.setattr("family_ea.db.utc_now_iso", lambda: "2026-09-09T12:00:00Z")
     mid = db.insert_message("oleh", "oleh", "Газовик Петро ремонтував котел")
-    db.create_entry("Газовик Петро замінив клапан у котлі", "2026-09-09", "oleh", mid)
     db.create_item(
         "Паспорт Олі",
         owner="Оля",
@@ -162,8 +160,7 @@ def test_build_context_sections(
         source_message_id=mid,
     )
     monkeypatch.setattr("family_ea.db.utc_now_iso", lambda: "2026-07-01T12:00:00Z")
-    db.create_entry("Котел чистили, 800 грн", "2026-07-01", "anna", mid)  # old: search only
-    db.create_item(
+    db.create_item(  # old: search only
         "Ключі від офісу",
         owner=None,
         place="офіс",
@@ -184,12 +181,11 @@ def test_build_context_sections(
     now = datetime(2026, 9, 10, 8, 0, tzinfo=KYIV)
     ctx = build_context(db, family, now, oleh, "Хто ремонтував котел?")
     assert "2026-09-10 08:00 (Europe/Kyiv), четвер" in ctx
-    assert "## Сім'я (пишуть боту; решта людей — у фактах і нотатках)\n- oleh: Олег" in ctx
+    assert "## Сім'я (пишуть боту; решта людей — у фактах)\n- oleh: Олег" in ctx
     assert "[#1] Поговорити з пані Марією (Олег, до 10.09)" in ctx
     assert "Задачі на сьогодні:\n- [#1]" in ctx
     assert "## Події (минулі за 7 днів і всі майбутні)\nнемає" in ctx
-    assert "## Нотатки (journal) за останні 2 дні\n- [#1] 09.09, Олег: Газовик Петро" in ctx
-    assert "## Старіші нотатки, схожі на повідомлення\n- [#2] 01.07, Анна: Котел чистили" in ctx
+    assert "Нотатки" not in ctx and "journal" not in ctx
     assert "## Речі (items), змінені за останні 2 дні\n- [#1] Паспорт Олі (Оля) → квартира" in ctx
     assert "## Речі, схожі на повідомлення\nнемає" in ctx
     assert "## Відомі місця (place), де лежать речі\nквартира (1), офіс (1)" in ctx

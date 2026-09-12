@@ -1,12 +1,10 @@
-"""SQLite storage: members, messages, journal, items, events, todos, reminders, facts,
-today lists.
+"""SQLite storage: members, messages, items, events, todos, reminders, facts, today lists.
 
-One connection, one process, one writer. Original messages are never mutated;
-journal entries are soft-deleted; items are removed (gone) and every change to one writes
-an item_history row; todos are closed, events are cancelled and reminders
-are sent, missed or cancelled, never removed (a past event simply passes); facts (the
-human-maintained standing context) keep every version; members (who talks to the bot) are
-edited by the admin on the web.
+One connection, one process, one writer. Original messages are never mutated; items are
+removed (gone) and every change to one writes an item_history row; todos are closed,
+events are cancelled and reminders are sent, missed or cancelled, never removed (a past
+event simply passes); facts (the human-maintained standing context) keep every version;
+members (who talks to the bot) are edited by the admin on the web.
 """
 
 from __future__ import annotations
@@ -30,16 +28,6 @@ CREATE TABLE IF NOT EXISTS messages (
   is_voice INTEGER NOT NULL DEFAULT 0,
   photo_file_id TEXT,               -- Telegram file id of the photo sent with the message
   llm_result TEXT                   -- JSON: what the LLM returned and what was applied
-);
-
-CREATE TABLE IF NOT EXISTS journal (
-  id INTEGER PRIMARY KEY,
-  text TEXT NOT NULL,               -- the entry in full; can be long
-  date TEXT NOT NULL,               -- ISO date: the day the entry is about
-  created_by TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  source_message_id INTEGER NOT NULL,
-  deleted_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS todos (
@@ -142,20 +130,6 @@ CREATE TABLE IF NOT EXISTS members (
   telegram_id INTEGER UNIQUE,       -- the allowlist; NULL until known
   created_at TEXT NOT NULL
 );
-
-CREATE VIRTUAL TABLE IF NOT EXISTS journal_fts
-  USING fts5(text, content='journal', content_rowid='id');
-
-CREATE TRIGGER IF NOT EXISTS journal_ai AFTER INSERT ON journal BEGIN
-  INSERT INTO journal_fts(rowid, text) VALUES (new.id, new.text);
-END;
-CREATE TRIGGER IF NOT EXISTS journal_ad AFTER DELETE ON journal BEGIN
-  INSERT INTO journal_fts(journal_fts, rowid, text) VALUES ('delete', old.id, old.text);
-END;
-CREATE TRIGGER IF NOT EXISTS journal_au AFTER UPDATE OF text ON journal BEGIN
-  INSERT INTO journal_fts(journal_fts, rowid, text) VALUES ('delete', old.id, old.text);
-  INSERT INTO journal_fts(rowid, text) VALUES (new.id, new.text);
-END;
 """
 
 
@@ -207,19 +181,6 @@ class Attachment:
     @property
     def is_image(self) -> bool:
         return self.mime.startswith("image/")
-
-
-@dataclass(frozen=True)
-class Entry:
-    """A journal entry: what happened, in full, on a given day."""
-
-    id: int
-    text: str
-    date: str  # ISO date: the day the entry is about
-    created_by: str
-    created_at: str
-    source_message_id: int
-    deleted_at: str | None
 
 
 @dataclass(frozen=True)
@@ -354,10 +315,6 @@ def _message(row: sqlite3.Row) -> Message:
     return Message(**d)
 
 
-def _entry(row: sqlite3.Row) -> Entry:
-    return Entry(**dict(row))
-
-
 def _attachment(row: sqlite3.Row) -> Attachment:
     return Attachment(**dict(row))
 
@@ -382,7 +339,6 @@ def _reminder(row: sqlite3.Row) -> Reminder:
     return Reminder(**dict(row))
 
 
-ENTRY_UPDATABLE = ("text", "date")
 ITEM_UPDATABLE = ("name", "owner", "place", "spot", "note")
 ITEM_LABELS = {"name": "назва", "owner": "власник", "note": "примітка"}  # history detail
 TODO_UPDATABLE = ("text", "owner", "due")
@@ -409,15 +365,8 @@ class Database:
         tables = {
             r[0] for r in self.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
-        if "memories" in tables:
-            # 2026-09-11: memories became the journal. An old row's day is the (UTC) day it was
-            # written; the journal triggers index the copied rows; the old table goes.
-            self.conn.executescript(
-                "INSERT INTO journal (text, date, created_by, created_at, source_message_id,"
-                " deleted_at) SELECT text, substr(created_at, 1, 10), created_by, created_at,"
-                " source_message_id, deleted_at FROM memories ORDER BY id;"
-                " DROP TABLE IF EXISTS memories_fts; DROP TABLE memories;"
-            )
+        # The notes went on 2026-09-12: a `journal` table (with its FTS index and triggers)
+        # from before that stays in the file untouched, no longer created or read.
         if "commitments" in tables:
             # 2026-09-12: commitments became todos. A todo has a deadline day, not a time or
             # a window (a thing with a time of day is an event): due_at -> its day in Kyiv,
@@ -538,79 +487,6 @@ class Database:
             (chat_with,),
         ).fetchone()
         return _message(row) if row else None
-
-    # --- journal ------------------------------------------------------------
-
-    def create_entry(self, text: str, date: str, created_by: str, source_message_id: int) -> int:
-        cur = self.conn.execute(
-            "INSERT INTO journal (text, date, created_by, created_at, source_message_id)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (text, date, created_by, utc_now_iso(), source_message_id),
-        )
-        self.conn.commit()
-        return int(cur.lastrowid or 0)
-
-    def update_entry(self, entry_id: int, **fields: str | None) -> bool:
-        """Update text/date of an active entry. Returns False if unknown or deleted."""
-        fields = {k: v for k, v in fields.items() if k in ENTRY_UPDATABLE}
-        if not fields:
-            return False
-        assignments = ", ".join(f"{k} = ?" for k in fields)
-        cur = self.conn.execute(
-            f"UPDATE journal SET {assignments} WHERE id = ? AND deleted_at IS NULL",
-            (*fields.values(), entry_id),
-        )
-        self.conn.commit()
-        return cur.rowcount == 1
-
-    def delete_entry(self, entry_id: int) -> bool:
-        """Soft delete. Returns False if the entry does not exist or is already deleted."""
-        cur = self.conn.execute(
-            "UPDATE journal SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
-            (utc_now_iso(), entry_id),
-        )
-        self.conn.commit()
-        return cur.rowcount == 1
-
-    def get_entry(self, entry_id: int) -> Entry | None:
-        row = self.conn.execute("SELECT * FROM journal WHERE id = ?", (entry_id,)).fetchone()
-        return _entry(row) if row else None
-
-    def entries_since(self, since_iso: str) -> list[Entry]:
-        """Active entries written at or after `since_iso`, oldest first."""
-        rows = self.conn.execute(
-            "SELECT * FROM journal WHERE deleted_at IS NULL AND created_at >= ? ORDER BY id",
-            (since_iso,),
-        ).fetchall()
-        return [_entry(r) for r in rows]
-
-    def list_entries(self, limit: int = 200) -> list[Entry]:
-        """Active entries, newest day first, newest first within a day."""
-        rows = self.conn.execute(
-            "SELECT * FROM journal WHERE deleted_at IS NULL ORDER BY date DESC, id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-        return [_entry(r) for r in rows]
-
-    def search_entries(
-        self, match: str, limit: int = 10, exclude_ids: set[int] | None = None
-    ) -> list[Entry]:
-        """FTS5 search over active entries; `match` is an FTS5 query string."""
-        if not match:
-            return []
-        try:
-            rows = self.conn.execute(
-                "SELECT j.* FROM journal_fts f JOIN journal j ON j.id = f.rowid"
-                " WHERE journal_fts MATCH ? AND j.deleted_at IS NULL"
-                " ORDER BY f.rank LIMIT ?",
-                (match, limit + len(exclude_ids or ())),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            return []  # malformed query; search is best-effort
-        out = [_entry(r) for r in rows]
-        if exclude_ids:
-            out = [e for e in out if e.id not in exclude_ids]
-        return out[:limit]
 
     # --- attachments --------------------------------------------------------
     # The bytes are in files.FileStore; the row says which message brought them.

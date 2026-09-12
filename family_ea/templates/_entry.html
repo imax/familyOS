@@ -1,1 +1,0 @@
-<li>{{ e.text }}{% set shown = files.get(e.id) if files is defined else none %}{% if shown %}{% include "_files.html" %}{% endif %}<div class="meta">{{ e.created_by | person }}, {{ e.date | date }}</div></li>

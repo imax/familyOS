@@ -2,8 +2,8 @@
 
 `python -m family_ea [serve]` runs bot + web; `web` runs the web alone on the local db and
 prints a login link; `chat --as oleh` is a REPL; `pull` downloads a snapshot of the deployed
-database; `backup` zips a snapshot with the notes as Markdown; `log` prints messages with
-what the LLM did.
+database; `backup` zips a snapshot with the files; `log` prints messages with what the
+LLM did.
 """
 
 from __future__ import annotations
@@ -30,9 +30,7 @@ def main() -> None:
     pull_parser.add_argument(
         "--to", type=Path, default=Path("data/prod.db"), help="where to save it"
     )
-    backup_parser = sub.add_parser(
-        "backup", help="zip a database snapshot, the notes as .md and the files"
-    )
+    backup_parser = sub.add_parser("backup", help="zip a database snapshot and the files")
     backup_parser.add_argument("--db", type=Path, help="database file (default: DATABASE_PATH)")
     backup_parser.add_argument(
         "--files",

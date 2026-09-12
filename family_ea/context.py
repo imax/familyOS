@@ -1,8 +1,8 @@
 """Deterministic context for the LLM, the event agenda, todo buckets, the digest,
 the web timeline.
 
-Everything here is plain code: what is "today", what is "overdue", which journal
-entries to show. The LLM only sees the result.
+Everything here is plain code: what is "today", what is "overdue", which items to
+show. The LLM only sees the result.
 """
 
 from __future__ import annotations
@@ -10,24 +10,18 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from itertools import groupby
 from zoneinfo import ZoneInfo
 
-from .db import Database, Entry, Event, Item, Member, Message, Reminder, TodayList, Todo
+from .db import Database, Event, Item, Member, Message, Reminder, TodayList, Todo
 from .family import Family
 
-RECENT_WINDOW_DAYS = 2  # notes and items this fresh are in every LLM context; older: search
+RECENT_WINDOW_DAYS = 2  # items changed this recently are in every LLM context; older: search
 ITEM_HITS = 20  # items found by the message's words
 RECENT_MESSAGES = 20
-FTS_LIMIT = 10
 PAST_EVENT_DAYS = 7  # ended events stay in the LLM context this long ("коли був стоматолог?")
 ALL_DAY = "весь день"  # the timeline's label where a time would be
 DEFAULT_EVENT_DURATION = timedelta(hours=1)
 WEEKDAYS_UK = ("понеділок", "вівторок", "середа", "четвер", "п'ятниця", "субота", "неділя")
-MONTHS_UK = (
-    "січень", "лютий", "березень", "квітень", "травень", "червень",
-    "липень", "серпень", "вересень", "жовтень", "листопад", "грудень",
-)  # fmt: skip
 
 
 # --- dates -------------------------------------------------------------------
@@ -479,20 +473,6 @@ def build_timeline(
     return t
 
 
-# --- journal ------------------------------------------------------------------
-
-
-def month_title(iso_month: str) -> str:
-    """'2026-09' -> 'Вересень 2026'."""
-    year, month = iso_month.split("-")
-    return f"{MONTHS_UK[int(month) - 1].capitalize()} {year}"
-
-
-def group_by_month(entries: list[Entry]) -> list[tuple[str, list[Entry]]]:
-    """Entries in the given order, grouped by the month of their day: [(title, entries)]."""
-    return [(month_title(m), list(g)) for m, g in groupby(entries, key=lambda e: e.date[:7])]
-
-
 # --- search -------------------------------------------------------------------
 
 _WORD = re.compile(r"\w+", re.UNICODE)
@@ -548,11 +528,6 @@ def stems(text: str, max_terms: int = 12) -> list[str]:
     return out
 
 
-def fts_query(text: str, max_terms: int = 12) -> str:
-    """The stems as a forgiving FTS5 query: prefixes, OR-ed. '' when there is nothing."""
-    return " OR ".join(f'"{s}"*' for s in stems(text, max_terms))
-
-
 def word_pattern(text: str, max_terms: int = 12) -> str | None:
     """The stems as a regex for `ufold(text) REGEXP ?`: a word starting with any of them."""
     terms = stems(text, max_terms)
@@ -568,10 +543,6 @@ def item_line(i: Item, with_id: bool = True) -> str:
     owner = f" ({i.owner})" if i.owner else ""
     note = f"; {i.note}" if i.note else ""
     return f"{head}{i.name}{owner} → {i.location or 'місце невідоме'}{note}"
-
-
-def _entry_line(e: Entry, family: Family) -> str:
-    return f"[#{e.id}] {fmt_date(e.date)}, {family.display_name(e.created_by)}: {e.text}"
 
 
 def _message_line(msg: Message, family: Family, tz: ZoneInfo) -> str:
@@ -610,12 +581,8 @@ def build_context(
     agenda = build_agenda(db.planned_events(), now)
     open_todos = db.open_todos()
     buckets = bucket_todos(open_todos, now)
-    # The journal can be long; the LLM sees only what was just written and what the message
+    # The inventory can be long; the LLM sees only what just changed and what the message
     # is about. The rest is on the web.
-    recent_entries = db.entries_since(since_iso)
-    older_hits = db.search_entries(
-        fts_query(text), limit=FTS_LIMIT, exclude_ids={e.id for e in recent_entries}
-    )
     recent_items = db.items_changed_since(since_iso)
     pattern = word_pattern(text)
     seen = {i.id for i in recent_items}
@@ -638,7 +605,7 @@ def build_context(
             "Зараз",
             [f"{now.strftime('%Y-%m-%d %H:%M')} ({tz.key}), {WEEKDAYS_UK[now.weekday()]}"],
         ),
-        section("Сім'я (пишуть боту; решта людей — у фактах і нотатках)", [family.describe()]),
+        section("Сім'я (пишуть боту; решта людей — у фактах)", [family.describe()]),
         section(
             "Факти про сім'ю (веде людина, стабільний фон)",
             [facts_text] if facts_text else [],
@@ -661,14 +628,6 @@ def build_context(
             [f"- {todo_line(t, family)}" for t in open_todos],
         ),
         section("Сьогодні / прострочено", [render_digest(agenda, buckets, family, tz)]),
-        section(
-            f"Нотатки (journal) за останні {RECENT_WINDOW_DAYS} дні",
-            [f"- {_entry_line(e, family)}" for e in recent_entries],
-        ),
-        section(
-            "Старіші нотатки, схожі на повідомлення",
-            [f"- {_entry_line(e, family)}" for e in older_hits],
-        ),
         section(
             f"Речі (items), змінені за останні {RECENT_WINDOW_DAYS} дні",
             [f"- {item_line(i)}" for i in recent_items],

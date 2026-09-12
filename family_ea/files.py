@@ -76,7 +76,7 @@ class Record(Protocol):
 
 def files_for(db: Database, kind: str, records: list) -> dict[int, list[Attachment]]:
     """The files under each record, by record id: those of the message that created it and
-    of every message whose `applied` log names it (`kind` is 'entry' or 'item'), in the
+    of every message whose `applied` log names it (`kind` is 'item'), in the
     order they arrived. Records without files are absent from the result."""
     rows = db.attachments_with_messages()
     if not rows:

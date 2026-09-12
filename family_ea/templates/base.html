@@ -42,7 +42,6 @@
   .mark { margin-right: .25rem; }
   .reminder, .reminder .time { color: #888; }
   .rows .meta { display: inline; margin-left: .25rem; }
-  .journal li { white-space: pre-line; }
   .today .meta { display: block; margin-left: 0; }
   .done li { color: #888; }
   .today .text { white-space: pre-line; }
@@ -78,7 +77,6 @@
 {% set path = request.url.path %}
 <nav>
   <a href="/"{% if path == '/' and not q %} class="current"{% endif %}>Задачі</a>
-  <a href="/journal"{% if path == '/journal' %} class="current"{% endif %}>Нотатки</a>
   <a href="/items"{% if path.startswith('/items') %} class="current"{% endif %}>Речі</a>
   <details class="admin">
     <summary>Адмін</summary>

@@ -1,5 +1,4 @@
-"""Apply LLM operations to the database: journal, items, events, todos, reminders,
-today boards.
+"""Apply LLM operations to the database: items, events, todos, reminders, today boards.
 
 Invalid ops (unknown ids, closed items, bad dates, an event without a date, a reminder
 without a time) are ignored and logged, never fatal. Closing a todo goes through
@@ -16,14 +15,14 @@ from zoneinfo import ZoneInfo
 
 from .db import Database
 from .family import Family
-from .llm import EventOp, ItemOp, JournalOp, LlmResult, ReminderOp, TodoOp
+from .llm import EventOp, ItemOp, LlmResult, ReminderOp, TodoOp
 
 log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class Applied:
-    kind: str  # 'entry' | 'item' | 'event' | 'todo' | 'reminder' | 'today'
+    kind: str  # 'item' | 'event' | 'todo' | 'reminder' | 'today'
     op: str
     id: int | None
     ok: bool
@@ -64,21 +63,6 @@ def normalize_member(member_id: str, family: Family) -> str | None:
 def _text(value: str) -> str | None:
     """Trimmed, or None when nothing was given."""
     return value.strip() or None
-
-
-def _entry_fields(j: JournalOp) -> tuple[dict, list[str]]:
-    """Validated fields present on the op. The text starts with a capital letter."""
-    fields: dict[str, str | None] = {}
-    notes: list[str] = []
-    if (text := _text(j.text)) is not None:
-        fields["text"] = text[:1].upper() + text[1:]
-    if j.date:
-        value = normalize_date(j.date)
-        if value is None:
-            notes.append(f"bad date {j.date!r} dropped")
-        else:
-            fields["date"] = value
-    return fields, notes
 
 
 def _item_fields(i: ItemOp) -> tuple[dict, list[str]]:
@@ -195,34 +179,6 @@ def apply_ops(
     tz: ZoneInfo,
 ) -> list[Applied]:
     applied: list[Applied] = []
-
-    for j in result.journal:
-        fields, notes = _entry_fields(j)
-        if j.op == "create":
-            if "text" not in fields:
-                applied.append(Applied("entry", "create", None, False, "empty text"))
-                continue
-            day = fields.get("date") or datetime.now(tz).date().isoformat()
-            eid = db.create_entry(fields["text"] or "", day, author_id, message_id)
-            applied.append(Applied("entry", "create", eid, True, "; ".join(notes)))
-        elif j.op == "update":
-            if not fields:
-                applied.append(Applied("entry", "update", j.id or None, False, "nothing to update"))
-                continue
-            ok = bool(j.id) and db.update_entry(j.id, **fields)
-            note = "; ".join(notes) if ok else "not found or deleted"
-            applied.append(Applied("entry", "update", j.id or None, ok, note))
-        elif j.op == "delete":
-            ok = bool(j.id) and db.delete_entry(j.id)
-            applied.append(
-                Applied(
-                    "entry",
-                    "delete",
-                    j.id or None,
-                    ok,
-                    "" if ok else "not found or already deleted",
-                )
-            )
 
     for i in result.items:
         fields, notes = _item_fields(i)

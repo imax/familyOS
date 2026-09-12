@@ -227,8 +227,8 @@ def _pull_files(client: httpx.Client, base: str, headers: dict[str, str], store:
 
 
 _OP_KIND = {
-    "journal": "entry",
     "items": "item",
+    "journal": "entry",  # rows from 2026-09-11 and 2026-09-12, when there were notes
     "memories": "memory",  # rows from before 2026-09-11
     "events": "event",
     "todos": "todo",
@@ -267,14 +267,12 @@ def files_next_to(db_path: Path) -> Path:
 
 
 def backup(settings: Settings, db_path: Path, files_dir: Path, dest_dir: Path) -> Path:
-    """Write `family-YYYY-MM-DD.zip` (a database snapshot, the notes as `notes.md`, the files
-    under `files/`) to `dest_dir`. Works on any database file, e.g. the one `pull` just
-    fetched, with the files it mirrored next to it."""
+    """Write `family-YYYY-MM-DD.zip` (a database snapshot and the files under `files/`) to
+    `dest_dir`. Works on any database file, e.g. the one `pull` just fetched, with the
+    files it mirrored next to it."""
     db = Database(db_path)
     try:
-        path, missing = write_archive(
-            db, Family(db, settings.admin_user_id), settings.tz, dest_dir, FileStore(files_dir)
-        )
+        path, missing = write_archive(db, settings.tz, dest_dir, FileStore(files_dir))
     finally:
         db.close()
     print(f"{path.stat().st_size} bytes -> {path}")

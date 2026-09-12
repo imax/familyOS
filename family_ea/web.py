@@ -29,8 +29,6 @@ from .context import (
     fmt_dt,
     fmt_due,
     fmt_event_when,
-    fts_query,
-    group_by_month,
     today_blocks,
     word_pattern,
 )
@@ -145,7 +143,6 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
         if q and q.strip():
             q = q.strip()
             pattern = word_pattern(q)
-            entries = db.search_entries(fts_query(q), limit=50)
             items = db.search_items(pattern, limit=50) if pattern else []
             return templates.TemplateResponse(
                 request,
@@ -154,9 +151,7 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
                     "q": q,
                     "events": db.search_events(pattern) if pattern else [],
                     "todos": db.search_todos(pattern) if pattern else [],
-                    "entries": entries,
                     "items": items,
-                    "files": files_for(db, "entry", entries),
                     "item_files": files_for(db, "item", items),
                 },
             )
@@ -174,16 +169,6 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
                 "today": boards,
                 "done": db.recent_done_todos(DONE_SHOWN),
             },
-        )
-
-    @app.get("/journal", response_class=HTMLResponse, dependencies=[Depends(authed)])
-    async def journal(request: Request) -> HTMLResponse:
-        """What happened, by month, newest first; a note shows the photos it was made from."""
-        entries = db.list_entries(limit=200)
-        return templates.TemplateResponse(
-            request,
-            "journal.html",
-            {"months": group_by_month(entries), "files": files_for(db, "entry", entries)},
         )
 
     @app.get("/items", response_class=HTMLResponse, dependencies=[Depends(authed)])

@@ -3,7 +3,7 @@
 A private executive assistant for one family, living in Telegram.
 
 Two people throw context at the bot during the day: text, voice or a photo with a
-caption, in natural language, without deciding whether it is a task, a note or a thing.
+caption, in natural language, without deciding whether it is a task, an event or a thing.
 The bot keeps one shared state, answers questions about it, and every morning writes
 each person what is on today and what is still hanging. A small web page shows what the
 system actually stored and lets you tidy it by hand.
@@ -16,8 +16,6 @@ calls: all it knows is in the context the code builds for it.
 
 ## What it keeps
 
-- **Notes** (Нотатки): what happened, in full, by day. «Зробив ТО, все ок, ось роботи і
-  ціни».
 - **Things** (Речі): what the family has, whose it is and where it lies right now, with
   a history of moves and the photos it was described from. «Паспорт Олі лежить у сейфі».
 - **Events**: something happens at a time or on a day and then passes.
@@ -28,6 +26,11 @@ calls: all it knows is in the context the code builds for it.
   sentence and rewritten on request.
 - **Facts**: stable background about the family, edited by a human on the web; the model
   reads it, never writes it.
+
+What happened, stories and contacts are not kept. Notes (what happened, in full, by day)
+were built in the first days and removed on 2026-09-12 as not needed yet: the bot answers
+and does not promise to write such things down; the stable part goes into the facts by
+hand.
 
 Every push is deterministic: the 08:30 digest renders the boards, today's and tomorrow's
 events, todos due today and overdue, and stays silent when there is nothing to say.
@@ -40,7 +43,7 @@ changes: [docs/status.md](docs/status.md) (Ukrainian).
 ## Stack
 
 Python 3.12, `python-telegram-bot` (long polling + JobQueue), FastAPI + Jinja for the web
-view, SQLite with FTS5, the Anthropic SDK (structured output), OpenAI for transcription.
+view, SQLite, the Anthropic SDK (structured output), OpenAI for transcription.
 One process, one SQLite writer. Deployed on [Fly.io](https://fly.io) with a persistent
 volume for the database and the photos.
 
@@ -55,7 +58,7 @@ make local                    # pull production and make it the local db + files
 uv run python -m family_ea chat --as oleh --name Олег   # the pipeline as a REPL, no Telegram
 make test                     # deterministic tests, the LLM is faked
 make log                      # pull production, print the last messages with what the LLM did
-make backup                   # pull production, zip the db with the notes as Markdown and the files
+make backup                   # pull production, zip the db and the files
 ```
 
 `.env` and `data/` are gitignored. They hold the admin's Telegram id, secrets, the

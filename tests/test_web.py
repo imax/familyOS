@@ -57,7 +57,6 @@ def test_web_pages(db: Database, family: Family) -> None:
     mid = db.insert_message("oleh", "oleh", "Газовик Петро", tg_message_id=1)
     db.set_llm_result(mid, '{"output": {"reply": "Записав."}}')
     db.insert_message("bot", "oleh", "Записав.")
-    db.create_entry("Газовик Петро замінив клапан", "2026-09-10", "oleh", mid)
     db.create_todo(
         "Стоматолог",
         owner="anna",
@@ -100,11 +99,10 @@ def test_web_pages(db: Database, family: Family) -> None:
     home = client.get("/", headers=_auth())
     assert home.status_code == 200
     assert "Стоматолог" in home.text and "Анна" in home.text
-    assert "Газовик" in client.get("/journal", headers=_auth()).text
     assert ">Задачі</a>" in home.text and 'class="current">Задачі' in home.text
-    assert ">Нотатки</a>" in home.text and ">Користувачі</a>" in home.text
-    assert ">Документи</a>" not in home.text  # three tabs: the documents one is gone
-    assert "/memories" not in home.text  # the tab is Нотатки now
+    assert ">Речі</a>" in home.text and ">Користувачі</a>" in home.text
+    assert ">Нотатки</a>" not in home.text  # two tabs: the notes went on 2026-09-12
+    assert client.get("/journal", headers=_auth()).status_code == 404
     items = client.get("/items", headers=_auth())
     assert items.status_code == 200 and 'class="current">Речі' in items.text
     assert "Паспорт Олі" in items.text and "квартира" in items.text and "Без місця" in items.text
@@ -120,9 +118,9 @@ def test_web_pages(db: Database, family: Family) -> None:
     assert "Паспорт Олі" in client.get("/", params={"q": "паспорта"}, headers=_auth()).text
 
     search = client.get("/", params={"q": "котл"}, headers=_auth())
-    assert "нічого" in search.text  # no memory mentions "котл..."
-    search = client.get("/", params={"q": "газов"}, headers=_auth())
-    assert "замінив клапан" in search.text and 'class="id"' not in search.text
+    assert "нічого" in search.text  # nothing mentions "котл..."
+    search = client.get("/", params={"q": "стомат"}, headers=_auth())
+    assert "Стоматолог" in search.text and 'class="id"' not in search.text
     search = client.get("/", params={"q": "діти"}, headers=_auth())  # inflection
     assert "дітям взуття" in search.text and "Колі" not in search.text
     search = client.get("/", params={"q": "Коля"}, headers=_auth())
@@ -136,9 +134,8 @@ def test_web_pages(db: Database, family: Family) -> None:
 def test_web_files(db: Database, family: Family, tmp_path: Path) -> None:
     settings = _settings(files_dir=tmp_path / "files")
     sha = FileStore(settings.files_dir).put(JPEG, "image/jpeg")
-    mid = db.insert_message("oleh", "oleh", "додай у нотатки", photo_file_id="f")
+    mid = db.insert_message("oleh", "oleh", "це в бардачку", photo_file_id="f")
     db.add_attachment(mid, sha, "image/jpeg", len(JPEG))
-    eid = db.create_entry("ТО авто: 4 500 грн", "2026-09-11", "oleh", mid)
     iid = db.create_item(
         "Сервісна книжка",
         owner=None,
@@ -148,10 +145,7 @@ def test_web_files(db: Database, family: Family, tmp_path: Path) -> None:
         created_by="oleh",
         source_message_id=mid,
     )
-    applied = [
-        {"kind": "entry", "op": "create", "id": eid, "ok": True},
-        {"kind": "item", "op": "create", "id": iid, "ok": True},
-    ]
+    applied = [{"kind": "item", "op": "create", "id": iid, "ok": True}]
     db.set_llm_result(mid, json.dumps({"applied": applied}))
     lost = db.insert_message("anna", "anna", "", photo_file_id="g")
     db.add_attachment(lost, "0" * 64, "image/jpeg", 1)  # a row whose bytes are not on disk
@@ -177,17 +171,13 @@ def test_web_files(db: Database, family: Family, tmp_path: Path) -> None:
     assert client.get("/files.json", headers=_auth()).status_code == 401  # a cookie is not enough
     assert client.get("/files.json").status_code == 401
 
-    # under the note (one line: the li is pre-line); a «Фото» block of thumbnails on the
-    # item page, apart from the text; a mark in item rows
-    journal = client.get("/journal", headers=_auth()).text
-    thumb = f'ТО авто: 4 500 грн<div class="files"><a href="/files/{sha}" data-image><img src='
-    assert thumb in journal
-    assert '<dialog class="lightbox">' in journal and "showModal" in journal
-    assert "e.key === 'Escape'" in journal
+    # a «Фото» block of thumbnails on the item page, apart from the text; a mark in item rows
     item = client.get(f"/items/{iid}", headers=_auth()).text
     photos = f'<div class="photos"><a href="/files/{sha}" data-image><img src='
     assert "<h2>Фото</h2>" in item and photos in item and "бардачок" in item
     assert item.index("<h2>Фото</h2>") < item.index("<h2>Історія</h2>")
+    assert '<dialog class="lightbox">' in item and "showModal" in item
+    assert "e.key === 'Escape'" in item
     gallery = client.get("/items", headers=_auth()).text  # the visual index, at the bottom
     assert "📎" in gallery
     assert gallery.index("<h2>Нещодавно змінені</h2>") < gallery.index("<h2>Фото</h2>")
@@ -195,8 +185,8 @@ def test_web_files(db: Database, family: Family, tmp_path: Path) -> None:
     assert f'<span><a href="/items/{iid}">Сервісна книжка</a></span>' in gallery
     assert "📎" in client.get("/items", params={"place": "авто"}, headers=_auth()).text
     search = client.get("/", params={"q": "авто"}, headers=_auth()).text
-    assert f'<img src="/files/{sha}"' in search and "📎" in search
-    assert "Документи" not in search and "Документи" not in journal  # no such tab any more
+    assert "Сервісна книжка" in search and "📎" in search
+    assert "Документи" not in search and "Документи" not in item  # no such tab any more
     assert client.get("/documents", headers=_auth()).status_code == 404
 
 
