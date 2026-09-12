@@ -151,6 +151,12 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   (digest, reminders, the web link); when a capability is added or removed, that list changes in
   the same commit.
 - Keep it small. Two people use this; a feature earns its place by removing a real pain.
+- **Concrete models and use cases, not a Dropbox or a Google Docs.** A feature starts from
+  a question someone in the family actually asks («де паспорт?», «що в мене на сьогодні?»,
+  «коли стоматолог?») and a narrow data model that answers exactly it (an item with a
+  place, a todo with a day, an event with a time). «Store it so it is there» (files, PDFs,
+  scans, long free-text notes, exports) is not a use case: the «Документи» tab and the
+  notes were built that way and both went within a day (2026-09-12).
 
 ## Production
 
