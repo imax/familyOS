@@ -206,8 +206,6 @@ def llm_result_lines(raw: str) -> list[str]:
             line += f", {cached} from cache"
         lines.append(line)
     output = d.get("output") or {}
-    if output.get("photo"):
-        lines.append(f"photo: {output['photo']}")
     for key, kind in _OP_KIND.items():
         for op in output.get(key, []):
             fields = ", ".join(f"{k}={v!r}" for k, v in op.items() if k != "op" and v is not None)

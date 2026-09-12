@@ -6,7 +6,11 @@
   {% if item.removed_at %}<span class="status-dropped">більше нема</span>{% else %}{{ item.location or "місце невідоме" }}{% endif %}
   {% if item.note %}<br><span class="meta">{{ item.note }}</span>{% endif %}
 </p>
-{% if files %}{% set shown = files %}{% include "_files.html" %}{% endif %}
+{% if files %}
+<h2>Фото</h2>
+{#- square thumbnails, a tap opens the photo over the page: to spot the right thing fast -#}
+<div class="photos">{% for a in files %}<a href="/files/{{ a.sha256 }}"{% if a.is_image %} data-image{% else %} target="_blank"{% endif %}>{% if a.is_image %}<img src="/files/{{ a.sha256 }}" alt="" loading="lazy">{% else %}📄 {{ a.name or a.mime }}{% endif %}</a>{% endfor %}</div>
+{% endif %}
 <h2>Історія</h2>
 <ul>
   {% for h in history %}

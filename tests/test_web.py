@@ -103,7 +103,7 @@ def test_web_pages(db: Database, family: Family) -> None:
     assert "Газовик" in client.get("/journal", headers=_auth()).text
     assert ">Задачі</a>" in home.text and 'class="current">Задачі' in home.text
     assert ">Нотатки</a>" in home.text and ">Користувачі</a>" in home.text
-    assert ">Документи</a>" in home.text
+    assert ">Документи</a>" not in home.text  # three tabs: the documents one is gone
     assert "/memories" not in home.text  # the tab is Нотатки now
     items = client.get("/items", headers=_auth())
     assert items.status_code == 200 and 'class="current">Речі' in items.text
@@ -130,11 +130,9 @@ def test_web_pages(db: Database, family: Family) -> None:
 
     messages = client.get("/messages", headers=_auth())
     assert "бот → Олег" in messages.text and "Записав." in messages.text
-    docs = client.get("/documents", headers=_auth())
-    assert docs.status_code == 200 and "поки порожньо" in docs.text
 
 
-def test_web_files_and_documents(db: Database, family: Family, tmp_path: Path) -> None:
+def test_web_files(db: Database, family: Family, tmp_path: Path) -> None:
     settings = _settings(files_dir=tmp_path / "files")
     sha = FileStore(settings.files_dir).put(JPEG, "image/jpeg")
     mid = db.insert_message("oleh", "oleh", "додай у нотатки", photo_file_id="f")
@@ -149,14 +147,11 @@ def test_web_files_and_documents(db: Database, family: Family, tmp_path: Path) -
         created_by="oleh",
         source_message_id=mid,
     )
-    cid = db.create_todo("Записатись на ТО", owner="oleh", created_by="oleh", source_message_id=mid)
     applied = [
         {"kind": "entry", "op": "create", "id": eid, "ok": True},
         {"kind": "item", "op": "create", "id": iid, "ok": True},
-        {"kind": "todo", "op": "create", "id": cid, "ok": True},
     ]
     db.set_llm_result(mid, json.dumps({"applied": applied}))
-    db.describe_attachments(mid, "Рахунок СТО «Автомайстер» № 1187 від 30.08.2026 на 4 500 грн.")
     lost = db.insert_message("anna", "anna", "", photo_file_id="g")
     db.add_attachment(lost, "0" * 64, "image/jpeg", 1)  # a row whose bytes are not on disk
     client = TestClient(build_web(settings, family, db))
@@ -181,42 +176,23 @@ def test_web_files_and_documents(db: Database, family: Family, tmp_path: Path) -
     assert client.get("/files.json", headers=_auth()).status_code == 401  # a cookie is not enough
     assert client.get("/files.json").status_code == 401
 
-    # under the note (one line: the li is pre-line), on the item page, a mark in item rows
+    # under the note (one line: the li is pre-line); a «Фото» block of thumbnails on the
+    # item page, apart from the text; a mark in item rows
     journal = client.get("/journal", headers=_auth()).text
     thumb = f'ТО авто: 4 500 грн<div class="files"><a href="/files/{sha}" data-image><img src='
     assert thumb in journal
     assert '<dialog class="lightbox">' in journal and "showModal" in journal
     assert "e.key === 'Escape'" in journal
     item = client.get(f"/items/{iid}", headers=_auth()).text
-    assert f'<img src="/files/{sha}"' in item and "бардачок" in item
+    photos = f'<div class="photos"><a href="/files/{sha}" data-image><img src='
+    assert "<h2>Фото</h2>" in item and photos in item and "бардачок" in item
+    assert item.index("<h2>Фото</h2>") < item.index("<h2>Історія</h2>")
     assert "📎" in client.get("/items", headers=_auth()).text
     assert "📎" in client.get("/items", params={"place": "авто"}, headers=_auth()).text
     search = client.get("/", params={"q": "авто"}, headers=_auth()).text
     assert f'<img src="/files/{sha}"' in search and "📎" in search
-
-    # the Документи tab: every file, newest first, with the LLM's description, the caption
-    # and what was made of it, of every kind
-    docs = client.get("/documents", headers=_auth())
-    assert docs.status_code == 200 and 'class="current">Документи' in docs.text
-    assert docs.text.index("0" * 64) < docs.text.index(sha)
-    assert '<div class="meta text clamp">Рахунок СТО «Автомайстер» № 1187' in docs.text
-    assert docs.text.index('<div class="caption">додай у нотатки</div>') < docs.text.index(
-        "Рахунок СТО «Автомайстер»"
-    )
-    assert "ТО авто: 4 500 грн" in docs.text and "Сервісна книжка" in docs.text
-    assert "задача ·</span> Записатись на ТО" in docs.text
-    assert "без запису" in docs.text
-    assert f'<a href="/files/{sha}" data-image>' in docs.text
-    assert client.get("/documents").status_code == 401
-
-    # search finds a file by its description or caption, with the same row
-    found = client.get("/", params={"q": "автомайстер"}, headers=_auth()).text
-    assert "Документи · «автомайстер»" in found and "Рахунок СТО «Автомайстер»" in found
-    assert "Записатись на ТО" in found
-    found = client.get("/", params={"q": "нотатки"}, headers=_auth()).text  # the caption
-    assert "Рахунок СТО «Автомайстер»" in found
-    nothing = client.get("/", params={"q": "тренінг"}, headers=_auth()).text
-    assert "Рахунок СТО «Автомайстер»" not in nothing
+    assert "Документи" not in search and "Документи" not in journal  # no such tab any more
+    assert client.get("/documents", headers=_auth()).status_code == 404
 
 
 def test_web_refuses_without_configured_auth(db: Database, family: Family) -> None:

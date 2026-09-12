@@ -240,7 +240,7 @@ def test_apply_item_ops(db: Database, family: Family) -> None:
     assert [(a.ok, a.note) for a in applied] == [
         (True, ""),
         (False, "empty name"),
-        (False, "not found, gone or unchanged"),
+        (False, "not found or gone"),
     ]
     iid = applied[0].id or 0
     assert db.get_item(iid).name == "Паспорт Олі"
@@ -250,7 +250,7 @@ def test_apply_item_ops(db: Database, family: Family) -> None:
             "reply": "",
             "items": [
                 {"op": "update", "id": iid, "place": "квартира"},  # the spot goes with the place
-                {"op": "update", "id": iid},
+                {"op": "update", "id": iid},  # «ось ще фото»: a hit, the file lands under it
                 {"op": "update", "id": iid, "place": "квартира"},  # nothing new
                 {"op": "update", "id": iid, "name": "", "owner": " "},  # blanks mean «not given»
                 {"op": "remove", "id": iid},
@@ -261,9 +261,9 @@ def test_apply_item_ops(db: Database, family: Family) -> None:
     applied = apply_ops(db, r2, author_id="anna", message_id=mid, family=family, tz=KYIV)
     assert [(a.ok, a.note) for a in applied] == [
         (True, "moved"),
-        (False, "nothing to update"),
-        (False, "not found, gone or unchanged"),
-        (False, "nothing to update"),
+        (True, "unchanged"),
+        (True, "unchanged"),
+        (True, "unchanged"),
         (True, ""),
         (False, "not found or already gone"),
     ]

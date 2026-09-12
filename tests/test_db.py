@@ -263,8 +263,6 @@ def test_attachments_get_a_description_column(tmp_path: Path) -> None:
     db = Database(path)
     [old] = db.list_attachments()
     assert old.description is None and old.sha256 == "ab"
-    db.describe_attachments(1, "Чек")
-    assert db.list_attachments()[0].description == "Чек"
     db.close()
 
 

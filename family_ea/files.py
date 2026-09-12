@@ -1,11 +1,13 @@
-"""Files that came with messages: photos now, documents later.
+"""Files that came with messages: photos of things, for the inventory.
 
 The bytes live on disk under FILES_DIR, named by their SHA-256 (`ab/ab12….jpg`), so the
 same scan sent twice is one file, nothing is ever rewritten, and any sync is «list the
 hashes, fetch the missing ones». The database keeps one row per file (`attachments`)
 pointing at the message it came with; that is the only link. A note or an item shows the
 files of the message that created it and of every later message whose ops touched it
-(the `applied` log), so no LLM op ever mentions a file.
+(the `applied` log), so no LLM op ever mentions a file. Nothing describes or indexes a
+file: the item page shows its photos as thumbnails, and that is the whole feature (a
+«Документи» tab over every file was built and removed on 2026-09-12: too much).
 """
 
 from __future__ import annotations
@@ -13,11 +15,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from .db import Attachment, Database, Entry, Event, Item, Message, Todo
+from .db import Attachment, Database, Message
 
 EXTENSIONS = {
     "image/jpeg": ".jpg",
@@ -92,70 +93,4 @@ def files_for(db: Database, kind: str, records: list) -> dict[int, list[Attachme
         found = {a.id: a for a in by_message.get(r.source_message_id, []) + by_record.get(r.id, [])}
         if found:
             out[r.id] = [found[k] for k in sorted(found)]
-    return out
-
-
-@dataclass(frozen=True)
-class Document:
-    """One row of the Документи page: a file, the message it came with, what was made of it."""
-
-    file: Attachment
-    message: Message
-    entries: list[Entry]
-    items: list[Item]
-    todos: list[Todo]
-    events: list[Event]
-
-    @property
-    def has_records(self) -> bool:
-        return bool(self.entries or self.items or self.todos or self.events)
-
-
-def documents(db: Database, limit: int = 200) -> list[Document]:
-    """Every stored file, newest first, with the notes, items, todos and events its
-    message created or changed (deleted notes are left out; a gone item or a closed
-    todo still shows, marked as such)."""
-    return _documents(db, db.attachments_with_messages(limit=limit))
-
-
-def search_documents(db: Database, pattern: str, limit: int = 50) -> list[Document]:
-    """Files whose description or caption matches `pattern` (context.word_pattern)."""
-    return _documents(db, db.search_attachments(pattern, limit))
-
-
-def _documents(db: Database, rows: list[tuple[Attachment, Message]]) -> list[Document]:
-    out: list[Document] = []
-    for a, m in rows:
-        entries: list[Entry] = []
-        items: list[Item] = []
-        todos: list[Todo] = []
-        events: list[Event] = []
-        seen: set[tuple[str, int]] = set()
-        for ap in applied_of(m):
-            if not ap.get("ok") or not ap.get("id"):
-                continue
-            kind = str(ap.get("kind"))
-            if kind == "commitment":  # logs from before 2026-09-12
-                kind = "todo"
-            key = (kind, int(ap["id"]))
-            if key in seen:
-                continue
-            seen.add(key)
-            if key[0] == "entry":
-                e = db.get_entry(key[1])
-                if e and not e.deleted_at:
-                    entries.append(e)
-            elif key[0] == "item":
-                i = db.get_item(key[1])
-                if i:
-                    items.append(i)
-            elif key[0] == "todo":
-                c = db.get_todo(key[1])
-                if c:
-                    todos.append(c)
-            elif key[0] == "event":
-                ev = db.get_event(key[1])
-                if ev:
-                    events.append(ev)
-        out.append(Document(a, m, entries, items, todos, events))
     return out

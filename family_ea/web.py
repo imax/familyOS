@@ -36,7 +36,7 @@ from .context import (
 )
 from .db import Database, Member
 from .family import Family
-from .files import FileStore, documents, files_for, search_documents
+from .files import FileStore, files_for
 from .ical import event_ics, ics_filename, todo_ics
 
 log = logging.getLogger(__name__)
@@ -158,7 +158,6 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
                     "items": items,
                     "files": files_for(db, "entry", entries),
                     "item_files": files_for(db, "item", items),
-                    "documents": search_documents(db, pattern) if pattern else [],
                 },
             )
         now = datetime.now(settings.tz)
@@ -231,12 +230,6 @@ def build_web(settings: Settings, family: Family, db: Database) -> FastAPI:
                 "files": files_for(db, "item", [item]).get(iid, []),
             },
         )
-
-    @app.get("/documents", response_class=HTMLResponse, dependencies=[Depends(authed)])
-    async def documents_page(request: Request) -> HTMLResponse:
-        """Every file that came with a message, newest first, with what was made of it. A
-        view over `attachments`; there is no documents table."""
-        return templates.TemplateResponse(request, "documents.html", {"documents": documents(db)})
 
     @app.get("/files/{sha256}")
     async def file(request: Request, sha256: str) -> Response:

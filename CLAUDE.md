@@ -54,8 +54,7 @@ family_ea/
   pipeline.py   store (message, then its photo as an attachment) -> context -> LLM -> ops -> reply
   files.py      FileStore (bytes under FILES_DIR by SHA-256, `ab/ab12….jpg`, never rewritten),
                 files_for() (the files under each note/item, from source_message_id and the
-                `applied` log), documents() / search_documents() (the rows of the Документи
-                page: file, message, description, every record the message touched)
+                `applied` log)
   transcribe.py OpenAI gpt-4o-transcribe via httpx
   ical.py       an event (timed or all-day) or a dated todo (all-day) -> .ics bytes
   backup.py     the backup archive: a checked db snapshot + the notes as one Markdown + the
@@ -65,8 +64,8 @@ family_ea/
                 login link) under the digest, /today and /web
   web.py        FastAPI + Jinja: GET /login?t= (the bot's link; sets the cookie), GET / (the
                 boards, the timeline, the last done ones; ?q= searches), GET /journal (Нотатки, by month), GET /items (Речі:
-                places, recent; ?place= ?owner= list), GET /items/:id (history), GET /documents
-                (Документи: every file, newest first), GET /files/:sha256 (cookie or bearer),
+                places, recent; ?place= ?owner= list), GET /items/:id (photos, history),
+                GET /files/:sha256 (cookie or bearer),
                 GET /files.json (bearer; what `pull` mirrors), GET/POST /facts, GET/POST
                 /family, GET /messages, GET /events/:id.ics, GET /todos/:id.ics,
                 POST /todos/:id/done and /todos/:id/text (a tap on the home
@@ -104,13 +103,15 @@ tests/          deterministic; the LLM is faked, nothing hits the network
   is the message text. The bytes go to `FILES_DIR` (`files.FileStore`, content-addressed
   by SHA-256, written once, never changed) and a row to `attachments` with the
   `message_id`, before the LLM call, so a failed call loses nothing. That row is the only
-  link: a note or an item shows the files of the message that created it and of every
-  message whose `applied` log names it (`files.files_for`); no LLM op mentions a file, and
-  «Документи» is a view over `attachments`, not a table. The one thing the LLM says about
-  a photo is its description: the top-level `photo` field of the result (always, caption
-  or not), stored as `attachments.description` for browsing and web search. The prompt
-  still makes the record self-contained (the model never sees the photo again), and a
-  photo without a clear caption changes nothing.
+  link: an item (and a note) shows the files of the message that created it and of every
+  message whose `applied` log names it (`files.files_for`); no LLM op mentions a file and
+  nothing describes one. An item `update` that changes nothing is still `ok` in that log,
+  so «ось ще фото коробки» (an update with the id and no fields) puts the photo under it. Photos are for the inventory: a «Фото» block of thumbnails on
+  the item page, that is the whole feature. A «Документи» tab over every file, with an
+  LLM description per photo (`photo` field, `attachments.description`), was built on
+  2026-09-11 and removed on 2026-09-12 as too much; the column stays, unused. The prompt
+  makes the record self-contained (the model never sees the photo again), and a photo
+  without a clear caption changes nothing.
 - `messages.chat_with` is the family member whose chat the row belongs to, so bot replies
   and pushes can be attributed in context; `messages.llm_result` holds
   `{model, usage, request_id, output, applied}`, not the bare LLM output.

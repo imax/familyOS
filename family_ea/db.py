@@ -626,14 +626,6 @@ class Database:
         self.conn.commit()
         return int(cur.lastrowid or 0)
 
-    def describe_attachments(self, message_id: int, description: str) -> None:
-        """The LLM's description of what came with a message; every file of it gets it."""
-        self.conn.execute(
-            "UPDATE attachments SET description = ? WHERE message_id = ?",
-            (description, message_id),
-        )
-        self.conn.commit()
-
     def attachment_by_sha(self, sha256: str) -> Attachment | None:
         row = self.conn.execute(
             "SELECT * FROM attachments WHERE sha256 = ? ORDER BY id LIMIT 1", (sha256,)
@@ -652,17 +644,6 @@ class Database:
         sql = "SELECT * FROM attachments ORDER BY id DESC"
         rows = self.conn.execute(sql + (" LIMIT ?" if limit else ""), (limit,) if limit else ())
         return self._with_messages([_attachment(r) for r in rows.fetchall()])
-
-    def search_attachments(self, pattern: str, limit: int = 50) -> list[tuple[Attachment, Message]]:
-        """`pattern` is a casefolded regex (context.word_pattern) over the description and
-        the caption; newest first."""
-        rows = self.conn.execute(
-            "SELECT a.* FROM attachments a JOIN messages m ON m.id = a.message_id"
-            " WHERE ufold(coalesce(a.description, '') || ' ' || m.raw_text) REGEXP ?"
-            " ORDER BY a.id DESC LIMIT ?",
-            (pattern, limit),
-        ).fetchall()
-        return self._with_messages([_attachment(r) for r in rows])
 
     def _with_messages(self, files: list[Attachment]) -> list[tuple[Attachment, Message]]:
         ids = {a.message_id for a in files}

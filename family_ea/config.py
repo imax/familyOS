@@ -19,7 +19,7 @@ class Settings:
     anthropic_api_key: str | None
     openai_api_key: str | None
     database_path: Path
-    files_dir: Path  # photos (later documents) that came with messages, by content hash
+    files_dir: Path  # photos that came with messages, by content hash
     admin_user_id: int | None  # Telegram id of the admin; everyone else is in the db
     web_secret: str | None  # signs web links and cookies; no passwords
     web_url: str | None

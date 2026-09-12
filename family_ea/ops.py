@@ -241,14 +241,20 @@ def apply_ops(
             )
             applied.append(Applied("item", "create", iid, True, "; ".join(notes)))
         elif i.op == "update":
-            if not fields:
-                applied.append(Applied("item", "update", i.id or None, False, "nothing to update"))
-                continue
             kind = None
             if i.id:
                 kind = db.update_item(i.id, fields, who=author_id, source_message_id=message_id)
-            note = "; ".join([kind, *notes]) if kind else "not found, gone or unchanged"
-            applied.append(Applied("item", "update", i.id or None, kind is not None, note))
+            if kind:
+                applied.append(Applied("item", "update", i.id, True, "; ".join([kind, *notes])))
+                continue
+            current = db.get_item(i.id) if i.id else None
+            if current and not current.removed_at:
+                # Nothing differs, still a hit: a photo sent with the message lands under the
+                # item («ось ще фото коробки»), through the applied log.
+                note = "; ".join(["unchanged", *notes])
+                applied.append(Applied("item", "update", i.id, True, note))
+            else:
+                applied.append(Applied("item", "update", i.id or None, False, "not found or gone"))
         elif i.op == "remove":
             ok = bool(i.id) and db.remove_item(i.id, who=author_id, source_message_id=message_id)
             applied.append(

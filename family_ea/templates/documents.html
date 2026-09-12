@@ -1,8 +1,0 @@
-{% extends "base.html" %}
-{% block title %}Документи{% endblock %}
-{% block body %}
-<h2>Документи</h2>
-<ul class="docs">
-  {% for d in documents %}{% include "_document.html" %}{% else %}<li class="empty">поки порожньо: надішли боту фото з підписом</li>{% endfor %}
-</ul>
-{% endblock %}
